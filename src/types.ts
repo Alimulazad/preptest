@@ -213,14 +213,80 @@ export interface AIModelOption {
   isPopular?: boolean;
 }
 
-export interface KnowledgeSnippet {
+export type CarouselTheme =
+  | 'blue_royal'
+  | 'dark_navy'
+  | 'emerald_green'
+  | 'amber_gold'
+  | 'purple_violet'
+  | 'rose_crimson'
+  | 'cyber_cyan'
+  | 'sunset_orange'
+  | 'charcoal_dark';
+
+export type CarouselTextSize = 'small' | 'normal' | 'medium' | 'large';
+
+export type CarouselItemType =
+  | 'concept'
+  | 'formula'
+  | 'gk'
+  | 'quote'
+  | 'shortcut'
+  | 'announcement';
+
+export interface CarouselActionButton {
+  enabled: boolean;
+  text: string;
+  link: string;
+  variant?: 'primary' | 'glass' | 'outline';
+  isExternal?: boolean;
+}
+
+export interface CarouselItem {
   id: string;
-  type: 'quote' | 'formula' | 'gk' | 'concept';
+  type: CarouselItemType;
+  title_bn?: string;
   content_bn: string;
   content_latex?: string;
   answer_bn?: string;
   subject_id?: string;
-  active?: number;
+  theme?: CarouselTheme;
+  textSize?: CarouselTextSize;
+  customDuration?: number; // per-item duration in seconds
+  actionButton?: CarouselActionButton;
+  pinned?: boolean;
+  active: boolean;
+  order?: number;
+  createdAt?: number;
+  updatedAt?: number;
+}
+
+export interface CarouselSettings {
+  autoPlay: boolean;
+  intervalSeconds: number; // default duration (e.g. 5, 7, 10s)
+  defaultTheme: CarouselTheme;
+  defaultTextSize: CarouselTextSize;
+  showBadge: boolean;
+  showProgressDots: boolean;
+  showNavButtons: boolean;
+  pauseOnHover: boolean;
+  updatedAt?: number;
+}
+
+export interface KnowledgeSnippet {
+  id: string;
+  type: 'quote' | 'formula' | 'gk' | 'concept' | 'shortcut' | 'announcement';
+  title_bn?: string;
+  content_bn: string;
+  content_latex?: string;
+  answer_bn?: string;
+  subject_id?: string;
+  theme?: CarouselTheme;
+  textSize?: CarouselTextSize;
+  customDuration?: number;
+  actionButton?: CarouselActionButton;
+  pinned?: boolean;
+  active?: number | boolean;
 }
 
 export type DraftStatus = 'pending' | 'approved' | 'rejected';

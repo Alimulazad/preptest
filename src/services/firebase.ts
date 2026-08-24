@@ -1,5 +1,12 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import {
+  CarouselItem,
+  CarouselSettings,
+  CarouselTheme,
+  CarouselTextSize,
+  CarouselItemType,
+} from '../types';
+import {
   getAuth,
   GoogleAuthProvider,
   FacebookAuthProvider,
@@ -673,3 +680,203 @@ export async function deleteAdminNotification(id: string): Promise<void> {
     console.warn('[RTDB Delete Notification Warn]:', err);
   }
 }
+
+// ==========================================
+// 6. REALTIME DATABASE: KNOWLEDGE CAROUSEL LIVE SYNC
+// ==========================================
+
+export const DEFAULT_CAROUSEL_SETTINGS: CarouselSettings = {
+  autoPlay: true,
+  intervalSeconds: 7,
+  defaultTheme: 'blue_royal',
+  defaultTextSize: 'normal',
+  showBadge: true,
+  showProgressDots: true,
+  showNavButtons: true,
+  pauseOnHover: true,
+  updatedAt: Date.now(),
+};
+
+/**
+ * Subscribe to Knowledge Carousel Items & Settings in Real-Time
+ */
+export function subscribeKnowledgeCarousel(
+  callback: (data: { items: CarouselItem[]; settings: CarouselSettings }) => void
+): () => void {
+  try {
+    const rootRef = ref(firebaseRtdb, 'knowledge_carousel');
+
+    const unsubscribe = onValue(
+      rootRef,
+      (snapshot) => {
+        const val = snapshot.val();
+        if (!val) {
+          callback({ items: [], settings: DEFAULT_CAROUSEL_SETTINGS });
+          return;
+        }
+
+        const rawSettings = val.settings || {};
+        const settings: CarouselSettings = {
+          ...DEFAULT_CAROUSEL_SETTINGS,
+          ...rawSettings,
+        };
+
+        const rawItems = val.items || {};
+        const itemsList: CarouselItem[] = Object.values(rawItems);
+
+        // Sort: Pinned first, then by order/createdAt
+        itemsList.sort((a, b) => {
+          if (a.pinned && !b.pinned) return -1;
+          if (!a.pinned && b.pinned) return 1;
+          return (a.order ?? 999) - (b.order ?? 999) || (b.createdAt ?? 0) - (a.createdAt ?? 0);
+        });
+
+        callback({ items: itemsList, settings });
+      },
+      (err) => {
+        console.warn('[RTDB Carousel Sync Error]:', err);
+        callback({ items: [], settings: DEFAULT_CAROUSEL_SETTINGS });
+      }
+    );
+
+    return () => unsubscribe();
+  } catch (err) {
+    console.warn('[RTDB Subscribe Carousel Warn]:', err);
+    return () => {};
+  }
+}
+
+/**
+ * Save / Update Global Carousel Settings (Admin)
+ */
+export async function saveCarouselSettings(
+  settings: Partial<CarouselSettings>
+): Promise<void> {
+  const settingsRef = ref(firebaseRtdb, 'knowledge_carousel/settings');
+  const payload = sanitizeFirebasePayload({
+    ...DEFAULT_CAROUSEL_SETTINGS,
+    ...settings,
+    updatedAt: Date.now(),
+  });
+  await set(settingsRef, payload);
+}
+
+/**
+ * Save / Update a Single Carousel Item (Admin)
+ */
+export async function saveCarouselItem(
+  item: Partial<CarouselItem> & { content_bn: string }
+): Promise<string> {
+  const id = item.id || `item_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+  const itemRef = ref(firebaseRtdb, `knowledge_carousel/items/${id}`);
+
+  const payload: CarouselItem = {
+    id,
+    type: item.type || 'concept',
+    title_bn: (item.title_bn || '').trim(),
+    content_bn: (item.content_bn || '').trim(),
+    content_latex: (item.content_latex || '').trim(),
+    answer_bn: (item.answer_bn || '').trim(),
+    subject_id: item.subject_id || '',
+    theme: item.theme || 'blue_royal',
+    textSize: item.textSize || 'normal',
+    customDuration: Number(item.customDuration) > 0 ? Number(item.customDuration) : 0,
+    actionButton: {
+      enabled: Boolean(item.actionButton?.enabled),
+      text: (item.actionButton?.text || '').trim(),
+      link: (item.actionButton?.link || '').trim(),
+      variant: item.actionButton?.variant || 'primary',
+      isExternal: Boolean(item.actionButton?.isExternal),
+    },
+    pinned: Boolean(item.pinned),
+    active: item.active !== false,
+    order: Number(item.order) || 0,
+    createdAt: item.createdAt || Date.now(),
+    updatedAt: Date.now(),
+  };
+
+  const safePayload = sanitizeFirebasePayload(payload);
+  await set(itemRef, safePayload);
+  return id;
+}
+
+/**
+ * Update Partial fields of a Carousel Item
+ */
+export async function updateCarouselItem(
+  id: string,
+  updates: Partial<CarouselItem>
+): Promise<void> {
+  const itemRef = ref(firebaseRtdb, `knowledge_carousel/items/${id}`);
+  const safeUpdates = sanitizeFirebasePayload({
+    ...updates,
+    updatedAt: Date.now(),
+  });
+  await update(itemRef, safeUpdates);
+}
+
+/**
+ * Delete a Carousel Item (Admin)
+ */
+export async function deleteCarouselItem(id: string): Promise<void> {
+  await remove(ref(firebaseRtdb, `knowledge_carousel/items/${id}`));
+}
+
+/**
+ * Toggle Active Status of a Carousel Item (Admin)
+ */
+export async function toggleCarouselItemStatus(id: string, active: boolean): Promise<void> {
+  await update(ref(firebaseRtdb, `knowledge_carousel/items/${id}`), {
+    active,
+    updatedAt: Date.now(),
+  });
+}
+
+/**
+ * Toggle Pin Status of a Carousel Item (Admin)
+ */
+export async function toggleCarouselItemPin(id: string, pinned: boolean): Promise<void> {
+  await update(ref(firebaseRtdb, `knowledge_carousel/items/${id}`), {
+    pinned,
+    updatedAt: Date.now(),
+  });
+}
+
+/**
+ * Seed Default Items to Firebase (1-Click Sync)
+ */
+export async function seedDefaultCarouselToFirebase(defaultItems: any[]): Promise<void> {
+  const itemsMap: Record<string, CarouselItem> = {};
+  defaultItems.forEach((it, idx) => {
+    const id = it.id || `item_seed_${idx + 1}`;
+    itemsMap[id] = {
+      id,
+      type: it.type || 'concept',
+      title_bn: it.title_bn || '',
+      content_bn: it.content_bn || '',
+      content_latex: it.content_latex || '',
+      answer_bn: it.answer_bn || '',
+      subject_id: it.subject_id || '',
+      theme: it.theme || 'blue_royal',
+      textSize: it.textSize || 'normal',
+      customDuration: 0,
+      actionButton: {
+        enabled: false,
+        text: '',
+        link: '',
+        variant: 'primary',
+        isExternal: false,
+      },
+      pinned: false,
+      active: true,
+      order: idx + 1,
+      createdAt: Date.now() - (defaultItems.length - idx) * 1000,
+      updatedAt: Date.now(),
+    };
+  });
+
+  const safeMap = sanitizeFirebasePayload(itemsMap);
+  await set(ref(firebaseRtdb, 'knowledge_carousel/items'), safeMap);
+  await saveCarouselSettings(DEFAULT_CAROUSEL_SETTINGS);
+}
+

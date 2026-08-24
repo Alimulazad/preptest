@@ -48,10 +48,12 @@ import { AdminQuestionsTab } from './components/admin/AdminQuestionsTab';
 import { AdminSystemHealthWidget } from './components/admin/AdminSystemHealthWidget';
 import { AdminActiveUsersTab } from './components/admin/AdminActiveUsersTab';
 import { AdminNotificationsTab } from './components/admin/AdminNotificationsTab';
+import { AdminKnowledgeCarouselTab } from './components/admin/AdminKnowledgeCarouselTab';
 import { useToast } from './context/ToastContext';
 
 export type AdminTabType =
   | 'dashboard'
+  | 'carousel'
   | 'active_users'
   | 'notifications'
   | 'extract'
@@ -428,6 +430,19 @@ export const AdminApp: React.FC = () => {
             </button>
 
             <button
+              onClick={() => setActiveTab('carousel')}
+              className={`flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs font-semibold transition cursor-pointer whitespace-nowrap relative ${
+                activeTab === 'carousel'
+                  ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-md shadow-indigo-600/25'
+                  : 'text-slate-400 hover:text-white hover:bg-slate-900'
+              }`}
+            >
+              <Sparkles className="w-3.5 h-3.5 text-amber-400 animate-pulse" />
+              নলেজ ক্যারোসেল
+              <span className="w-2 h-2 rounded-full bg-indigo-400"></span>
+            </button>
+
+            <button
               onClick={() => setActiveTab('active_users')}
               className={`flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs font-semibold transition cursor-pointer whitespace-nowrap relative ${
                 activeTab === 'active_users'
@@ -534,6 +549,8 @@ export const AdminApp: React.FC = () => {
                 onNavigateTab={(tab) => setActiveTab(tab as AdminTabType)}
               />
             )}
+
+            {activeTab === 'carousel' && <AdminKnowledgeCarouselTab />}
 
             {activeTab === 'active_users' && <AdminActiveUsersTab />}
 

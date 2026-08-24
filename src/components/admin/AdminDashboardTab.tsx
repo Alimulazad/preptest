@@ -26,7 +26,7 @@ interface AdminDashboardTabProps {
   stats: AdminSystemStats | null;
   isLoadingStats: boolean;
   onRefreshStats: () => void;
-  onNavigateTab: (tab: 'extract' | 'drafts' | 'questions' | 'keys') => void;
+  onNavigateTab: (tab: string) => void;
 }
 
 export const AdminDashboardTab: React.FC<AdminDashboardTabProps> = ({
@@ -260,7 +260,28 @@ export const AdminDashboardTab: React.FC<AdminDashboardTabProps> = ({
           <span className="text-xs text-slate-500">যেকোনো মডিউলে সরাসরি প্রবেশ করুন</span>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {/* Action: Knowledge Carousel */}
+          <div
+            onClick={() => onNavigateTab('carousel')}
+            className="bg-white p-5 rounded-2xl border border-slate-200 hover:border-indigo-500 hover:shadow-lg transition-all duration-300 cursor-pointer group flex flex-col justify-between"
+          >
+            <div>
+              <div className="w-12 h-12 rounded-2xl bg-indigo-50 text-indigo-600 flex items-center justify-center shadow-sm mb-4 group-hover:bg-indigo-600 group-hover:text-white transition-colors duration-300">
+                <Sparkles className="w-6 h-6" />
+              </div>
+              <h3 className="text-base font-bold text-slate-900 group-hover:text-indigo-600 transition-colors">
+                নলেজ ক্যারোসেল কন্ট্রোল
+              </h3>
+              <p className="text-xs text-slate-600 mt-1.5 leading-relaxed">
+                হোমস্ক্রিনের শর্টকাট সূত্র, সাধারণ জ্ঞান ও অনুপ্রেরণামূলক স্লাইডারের টাইমার, থিম ও অ্যাকশন বাটন রিয়েল-টাইমে নিয়ন্ত্রণ করুন।
+              </p>
+            </div>
+            <div className="mt-4 pt-3 border-t border-slate-100 flex items-center text-xs font-bold text-indigo-600 gap-1.5 group-hover:translate-x-1 transition-transform">
+              ক্যারোসেল পরিচালনা করুন <ArrowRight className="w-3.5 h-3.5" />
+            </div>
+          </div>
+
           {/* Action 1: Extract */}
           <div
             onClick={() => onNavigateTab('extract')}
