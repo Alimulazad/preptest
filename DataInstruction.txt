@@ -1,0 +1,344 @@
+# PrepTest (টেস্ট দাও বেস্ট হও) — Data Specification & AI Extraction Engine Manual
+
+**Document Version:** 3.0 (Production Multi-Engine & TikZ Architecture)  
+**Target Audience:** AI Prompters, Content Operators, OCR Engineers, Admins, Database Managers
+
+---
+
+## ১. ওভারভিউ ও প্রজেক্ট ডেটা আর্কিটেকচার (Overview)
+
+PrepTest বাংলাদেশের শীর্ষ বিশ্ববিদ্যালয় ও মেডিকেল ভর্তি পরীক্ষার (BUET, DU, Medical, RU, CU, JU, BUP, GST) জন্য একটি আধুনিক প্রিপারেশন প্ল্যাটফর্ম। এই প্ল্যাটফর্মের প্রশ্নব্যাংক ও ডেটাবেজে টেক্সট, **LaTeX গাণিতিক সমীকরণ** এবং **TikZ ভেক্টর চিত্র** সরাসরি রেন্ডার হয়।
+
+এই ডকুমেন্টে রয়েছে:
+1. **প্রজেক্টের পূর্ণাঙ্গ ডেটা স্ট্রাকচার ও ফিল্ড স্পেসিফিকেশন**
+2. **বিষয় ও অধ্যায়ের স্ট্যান্ডার্ড আইডি চার্ট**
+3. **পিডিএফ / ইমেজ / ওবিজেক্ট স্ক্যান থেকে পারফেক্ট JSON বের করার রেডিমেড ইংরেজি AI প্রম্পট (Master Extraction Prompt)**
+4. **বাস্তব গোল্ডেন এক্সাম্পল (Few-Shot Examples with LaTeX & TikZ)**
+
+---
+
+## ২. প্রজেক্টের কোর ডেটা স্ট্রাকচার (Core Data Structures)
+
+### A. Question Object Schema (JSON)
+
+PrepTest এর প্রতিটি প্রশ্ন নিচের স্ট্রাকচার অনুযায়ী সংজ্ঞায়িত:
+
+| Field Name | Type | Required | Description & Allowed Values |
+| :--- | :--- | :--- | :--- |
+| `id` | `string` | Optional | ইউনিক আইডি (যেমন: `q_phy1_ch2_001` বা অটো জেনারেটেড UUID) |
+| `subject_id` | `string` | **Yes** | বিষয়ের আইডি (যেমন: `physics_1`, `math_2`, `chemistry_1` ইত্যাদি) |
+| `subject_name` | `string` | **Yes** | বিষয়ের পূর্ণ বাংলা নাম (যেমন: `"পদার্থবিজ্ঞান ১ম পত্র"`) |
+| `paper` | `string` | **Yes** | `"1st"` অথবা `"2nd"` |
+| `chapter_id` | `string` | **Yes** | অধ্যায়ের স্ট্যান্ডার্ড আইডি (যেমন: `phy1_ch2`) |
+| `chapter_name` | `string` | **Yes** | অধ্যায়ের বাংলা নাম (যেমন: `"ভেক্টর"`) |
+| `topic_id` | `string` | Optional | অধ্যায়ের অধীনস্থ টপিক আইডি (যেমন: `p1c2_s1`) |
+| `topic_name` | `string` | Optional | টপিকের বাংলা নাম (যেমন: `"ভেক্টর যোগ ও ডট-ক্রস গুণন"`) |
+| `category` | `string` | Optional | `'engineering'` \| `'varsity_a'` \| `'medical'` \| `'academic'` \| `'main_book'` |
+| `question_text` | `string` | **Yes** | মূল প্রশ্ন (বাংলা টেক্সট + LaTeX `$..$` + ঐচ্ছিক TikZ `\begin{tikzpicture}..\end{tikzpicture}`) |
+| `math_formula_latex` | `string` | Optional | প্রশ্নের মূল সূত্র বা সমীকরণ (ল্যাটেক্স ফরম্যাটে) |
+| `options` | `object` / `array` | **Yes** | ৪টি অপশন। অবজেক্ট: `{"A": "..", "B": "..", "C": "..", "D": ".."}` অথবা অ্যারে |
+| `correct_ans` | `string` | **Yes** | সঠিক উত্তর: `"A"`, `"B"`, `"C"`, বা `"D"` |
+| `explanation` | `string` | **Yes** | বিস্তারিত বাংলা সমাধান, শর্টকাট টেকনিক ও ব্যাখ্যা |
+| `explanation_latex` | `string` | Optional | ব্যাখ্যার প্রধান সমীকরণ বা ফাইনাল স্টেপ ল্যাটেক্স |
+| `question_image_url` | `string` | Optional | যদি কোনো এক্সটার্নাল ফটো থাকে (URL বা Cloudinary) |
+| `explanation_image_url` | `string` | Optional | ব্যাখ্যার ফটো (যদি থাকে) |
+| `tags` | `array[string]` | **Yes** | বিশ্ববিদ্যালয় ও সাল ট্যাগ (যেমন: `["DU 23-24", "BUET 22-23", "Engineering"]`) |
+| `star_rating` | `number` | **Yes** | গুরুত্ব নির্দেশক: `1` (সাধারণ), `2` (গুরুত্বপূর্ণ), `3` (টপ মোস্ট কমন) |
+| `type` | `string` | **Yes** | `"mcq"` অথবা `"written"` |
+| `difficulty` | `string` | Optional | `"easy"`, `"medium"`, অথবা `"hard"` |
+
+---
+
+## ৩. বিষয় ও অধ্যায়ের স্ট্যান্ডার্ড আইডি তালিকা (Master Subject & Chapter Mapping)
+
+AI এক্সট্রাকশনে সঠিক `subject_id` এবং `chapter_id` ব্যবহার করা বাধ্যতামূলক:
+
+### ১. পদার্থবিজ্ঞান ১ম পত্র (`physics_1` / `1st`)
+- `phy1_ch1`: ভৌতজগৎ ও পরিমাপ
+- `phy1_ch2`: ভেক্টর
+- `phy1_ch3`: গতিবিদ্যা
+- `phy1_ch4`: নিউটনিয়ান বলবিদ্যা
+- `phy1_ch5`: কাজ, শক্তি ও ক্ষমতা
+- `phy1_ch6`: মহাকর্ষ ও অভিকর্ষ
+- `phy1_ch7`: পদার্থের গাঠনিক ধর্ম
+- `phy1_ch8`: পর্যাবৃত্ত গতি
+- `phy1_ch9`: তরঙ্গ
+- `phy1_ch10`: আদর্শ গ্যাস ও গ্যাসের গতিতত্ত্ব
+
+### ২. পদার্থবিজ্ঞান ২য় পত্র (`physics_2` / `2nd`)
+- `phy2_ch1`: তাপগতিবিদ্যা
+- `phy2_ch2`: স্থির তড়িৎ
+- `phy2_ch3`: চল তড়িৎ
+- `phy2_ch4`: তড়িৎ প্রবাহের চৌম্বক ক্রিয়া ও চুম্বকত্ব
+- `phy2_ch5`: তাড়িতচৌম্বকীয় আবেশ ও পরিবর্তী প্রবাহ
+- `phy2_ch6`: জ্যামিতিক আলোকবিজ্ঞান
+- `phy2_ch7`: ভৌত আলোকবিজ্ঞান
+- `phy2_ch8`: আধুনিক পদার্থবিজ্ঞানের সূচনা
+- `phy2_ch9`: পরমাণুর মডেল ও নিউক্লিয়ার পদার্থবিজ্ঞান
+- `phy2_ch10`: সেমিকন্ডাক্টর ও ইলেকট্রনিক্স
+- `phy2_ch11`: জ্যোতির্বিজ্ঞান
+
+### ৩. রসায়ন ১ম পত্র (`chemistry_1` / `1st`)
+- `chem1_ch1`: ল্যাবরেটরির নিরাপদ ব্যবহার
+- `chem1_ch2`: গুণগত রসায়ন
+- `chem1_ch3`: মৌলের পর্যায়বৃত্ত ধর্ম ও রাসায়নিক বন্ধন
+- `chem1_ch4`: রাসায়নিক পরিবর্তন
+- `chem1_ch5`: কর্মমুখী রসায়ন
+
+### ৪. রসায়ন ২য় পত্র (`chemistry_2` / `2nd`)
+- `chem2_ch1`: পরিবেশ রসায়ন
+- `chem2_ch2`: জৈব রসায়ন
+- `chem2_ch3`: পরিমাণগত রসায়ন
+- `chem2_ch4`: তড়িৎ রসায়ন
+- `chem2_ch5`: অর্থনৈতিক রসায়ন
+
+### ৫. উচ্চতর গণিত ১ম পত্র (`math_1` / `1st`)
+- `math1_ch1`: ম্যাট্রিক্স ও নির্ণায়ক
+- `math1_ch3`: সরলরেখা
+- `math1_ch4`: বৃত্ত
+- `math1_ch7`: সংযুক্ত কোণের ত্রিকোণমিতিক অনুপাত
+- `math1_ch9`: অন্তরীকরণ (Differentiation)
+- `math1_ch10`: যোগজীকরণ (Integration)
+
+### ৬. উচ্চতর গণিত ২য় পত্র (`math_2` / `2nd`)
+- `math2_ch3`: জটিল সংখ্যা
+- `math2_ch4`: বহুপদী ও বহুপদী সমীকরণ
+- `math2_ch6`: কণিক
+- `math2_ch7`: বিপরীত ত্রিকোণমিতিক ফাংশন ও সমীকরণ
+- `math2_ch8`: স্থিতিবিদ্যা
+- `math2_ch9`: সমতলে দ্বিপদী গতি
+
+### ৭. জীববিজ্ঞান ১ম পত্র - উদ্ভিদবিজ্ঞান (`biology_1` / `1st`)
+- `bio1_ch1`: কোষ ও এর গঠন
+- `bio1_ch2`: কোষ বিভাজন
+- `bio1_ch4`: অণুজীব
+- `bio1_ch8`: টিস্যু ও টিস্যুতন্ত্র
+- `bio1_ch9`: উদ্ভিদ শারীরতত্ত্ব
+- `bio1_ch10`: উদ্ভিদ প্রজনন
+- `bio1_ch11`: জীবপ্রযুক্তি
+
+### ৮. জীববিজ্ঞান ২য় পত্র - প্রাণিবিজ্ঞান (`biology_2` / `2nd`)
+- `bio2_ch1`: প্রাণীর বিভিন্নতা ও শ্রেণিবিন্যাস
+- `bio2_ch2`: প্রাণীর পরিচিতি (হাইড্রা, ঘাসফড়িং, রুই মাছ)
+- `bio2_ch3`: মানব শারীরতত্ত্ব: পরিপাক ও শোষণ
+- `bio2_ch4`: মানব শারীরতত্ত্ব: রক্ত ও সংবহন
+- `bio2_ch5`: মানব শারীরতত্ত্ব: শ্বাসক্রিয়া ও শ্বসন
+- `bio2_ch7`: চলন ও অঙ্গচালনা
+- `bio2_ch8`: সমন্বয় ও নিয়ন্ত্রণ
+- `bio2_ch11`: জিনতত্ত্ব ও বিবর্তন
+
+---
+
+## ৪. মাস্টার এআই এক্সট্রাকশন প্রম্পট (Master AI Prompt for PDF/Image Extraction)
+
+নিচে দেওয়া ইংরেজি প্রম্পটটি সরাসরি **Gemini 1.5/2.5 Pro**, **Claude 3.5 Sonnet**, অথবা **GPT-4o** এর সিস্টেম বা ইউজার মেসেজে ইনপুট দিয়ে পিডিএফ পেজ বা ছবি আপলোড করুন:
+
+```text
+============================== START OF SYSTEM PROMPT ==============================
+You are a World-Class Academic Question Extraction and Conversion Engine specialized in Bangladeshi University Admission Question Banks (BUET, Dhaka University, Medical, SUST, RU, CU, GST, BUP).
+
+Your mission is to read input from scanned PDFs, book pages, OCR text, or images, and convert every single question into a structured, production-ready, 100% valid JSON array adhering strictly to the PrepTest Platform Data Schema.
+
+### CRITICAL RULES & INSTRUCTIONS:
+1. OUTPUT FORMAT:
+   - Output MUST be a single, valid, strictly formatted JSON array: [ { ... }, { ... } ].
+   - Do NOT wrap with unneeded conversational text. Provide clean JSON only.
+   - Ensure proper JSON string escaping (especially backslashes for LaTeX: use "\\" in raw text, like "\\frac{a}{b}" or "\\vec{A}").
+
+2. LANGUAGE & ENCODING:
+   - Keep Bengali text naturally formatted in UTF-8. Do not misspell technical terms.
+   - Maintain Bengali option labels if present: Option A = (ক), B = (খ), C = (গ), D = (ঘ).
+
+3. MATHEMATICS & FORMULAS (LaTeX):
+   - All mathematical variables, fractions, powers, units, vectors, matrices, and symbols must be formatted in LaTeX with dollar signs.
+   - Example: "$x = \\frac{-b \\pm \\sqrt{b^2 - 4ac}}{2a}$", "$\\vec{A} \\cdot \\vec{B} = 0$", "$10\\text{ ms}^{-1}$".
+
+4. DIAGRAMS & VECTOR GRAPHICS (TikZ Integration):
+   - If the source question contains a geometric diagram, vector triangle, coordinate axis, electrical circuit, ray optics, or physics force diagram, DO NOT omit it.
+   - Convert the visual diagram into a valid, standalone LaTeX TikZ snippet and embed it inside `question_text`, `options`, or `explanation`.
+   - Always wrap TikZ code within:
+     \begin{tikzpicture}[scale=1.0]
+       ...
+     \end{tikzpicture}
+   - Use standard TikZ commands: `\draw`, `\fill`, `\node`, `\draw[->, thick]`, `\draw[dashed]`, `circle`, `rectangle`.
+
+5. METADATA MAPPING:
+   - `subject_id`: Map accurately to one of:
+     ["physics_1", "physics_2", "chemistry_1", "chemistry_2", "math_1", "math_2", "biology_1", "biology_2", "ict", "bangla", "english", "gk"]
+   - `paper`: "1st" or "2nd"
+   - `chapter_id`: Map accurately to standard chapter IDs:
+     Physics 1: phy1_ch1 to phy1_ch10
+     Physics 2: phy2_ch1 to phy2_ch11
+     Chemistry 1: chem1_ch1 to chem1_ch5
+     Chemistry 2: chem2_ch1 to chem2_ch5
+     Higher Math 1: math1_ch1 to math1_ch10
+     Higher Math 2: math2_ch1 to math2_ch9
+     Biology 1: bio1_ch1 to bio1_ch11
+     Biology 2: bio2_ch1 to bio2_ch11
+   - `correct_ans`: Must be exactly "A", "B", "C", or "D".
+   - `star_rating`: 1 (Standard), 2 (Important / Multi-university asked), 3 (Top repeated BUET/DU questions).
+   - `difficulty`: "easy" | "medium" | "hard"
+   - `category`: "engineering" | "varsity_a" | "medical" | "academic" | "main_book"
+   - `tags`: Array containing University and Academic Session (e.g., ["DU 23-24", "BUET 22-23", "Engineering"]).
+
+6. COMPREHENSIVE EXPLANATION:
+   - Every question must include a detailed Bengali explanation (`explanation`) explaining why the correct option is right, step-by-step mathematical derivation, and shortcut admission hacks where applicable.
+
+=============================== END OF SYSTEM PROMPT ===============================
+```
+
+---
+
+### B. User Prompt Template (যখন আপনি ইমেজ বা পিডিএফ টেক্সট পাঠাবেন):
+
+```text
+Please extract all admission questions from the provided document/image(s) and return them as a valid JSON array matching the PrepTest schema.
+
+Subject: [e.g., Physics 1st Paper / রসায়ন ১ম পত্র]
+Chapter: [e.g., Vector / ভেক্টর (phy1_ch2)]
+Source Book / Exam: [e.g., DU Admission Question Bank 2024-25]
+
+Document Content / Attached Image(s):
+[Insert OCR text or upload page images here]
+```
+
+---
+
+## ৫. গোল্ডেন এক্সাম্পলসমূহ (Few-Shot Production Examples)
+
+নিচের নমুনাগুলো হুবহু অনুসরণ করলে আপনার JSON ফাইল ১০০% এরর-মুক্ত থাকবে:
+
+### উদাহরণ ১: পদার্থবিজ্ঞান ভেক্টর প্রশ্ন (TikZ ডায়াগ্রাম সহ)
+
+```json
+[
+  {
+    "id": "q_phy1_ch2_001",
+    "subject_id": "physics_1",
+    "subject_name": "পদার্থবিজ্ঞান ১ম পত্র",
+    "paper": "1st",
+    "chapter_id": "phy1_ch2",
+    "chapter_name": "ভেক্টর",
+    "topic_id": "p1c2_s1",
+    "topic_name": "ভেক্টর ত্রিভুজ সূত্র ও লব্ধি",
+    "category": "engineering",
+    "question_text": "নিচের চিত্রে তিনটি ভেক্টর $\\vec{A}$, $\\vec{B}$ এবং $\\vec{C}$ একটি আবদ্ধ ত্রিভুজ গঠন করেছে। ভেক্টর তিনটির ক্ষেত্রে নিচের কোন সম্পর্কটি সঠিক?\n\n\\begin{tikzpicture}[scale=1.2]\n  \\draw[->, thick, blue] (0,0) -- (2.2,0) node[midway, below] {\\( \\vec{A} \\)};\n  \\draw[->, thick, red] (2.2,0) -- (1.1,1.8) node[midway, right] {\\( \\vec{B} \\)};\n  \\draw[->, thick, emerald] (1.1,1.8) -- (0,0) node[midway, left] {\\( \\vec{C} \\)};\n\\end{tikzpicture}",
+    "math_formula_latex": "\\vec{A} + \\vec{B} + \\vec{C} = 0",
+    "options": {
+      "A": "$\\vec{A} + \\vec{B} = \\vec{C}$",
+      "B": "$\\vec{A} + \\vec{B} + \\vec{C} = 0$",
+      "C": "$\\vec{A} - \\vec{B} = \\vec{C}$",
+      "D": "$\\vec{A} = \\vec{B} + \\vec{C}$"
+    },
+    "correct_ans": "B",
+    "explanation": "ভেক্টর ত্রিভুজ সূত্রানুসারে, যদি কতগুলো ভেক্টর একই ক্রমে একটি আবদ্ধ বহুভুজ বা ত্রিভুজ তৈরি করে, তবে তাদের লব্ধি শূন্য হয়। চিত্রে $\\vec{A}$, $\\vec{B}$ এবং $\\vec{C}$ একই ক্রমে নির্দেশিত হওয়ায়:\n$$\\vec{A} + \\vec{B} + \\vec{C} = \\vec{0}$$\nসুতরাং সঠিক উত্তর (B)।",
+    "explanation_latex": "\\vec{A} + \\vec{B} + \\vec{C} = 0",
+    "tags": ["BUET 22-23", "DU 19-20", "Engineering", "Vector"],
+    "star_rating": 3,
+    "type": "mcq",
+    "difficulty": "medium"
+  }
+]
+```
+
+---
+
+### উদাহরণ ২: রসায়ন পরিমাণগত প্রশ্ন (LaTeX সমীকরণ সহ)
+
+```json
+[
+  {
+    "id": "q_chem2_ch3_001",
+    "subject_id": "chemistry_2",
+    "subject_name": "রসায়ন ২য় পত্র",
+    "paper": "2nd",
+    "chapter_id": "chem2_ch3",
+    "chapter_name": "পরিমাণগত রসায়ন",
+    "topic_id": "c2c3_s2",
+    "topic_name": "মোলারিটি ও দ্রবণ প্রস্তুতি",
+    "category": "varsity_a",
+    "question_text": "$250\\text{ mL}$ $0.1\\text{ M}$ $\\text{Na}_2\\text{CO}_3$ দ্রবণ তৈরি করতে কী পরিমাণ সোডিয়াম কার্বনেট প্রয়োজন?",
+    "math_formula_latex": "W = \\frac{SMV}{1000}",
+    "options": {
+      "A": "$2.65\\text{ g}$",
+      "B": "$5.30\\text{ g}$",
+      "C": "$10.6\\text{ g}$",
+      "D": "$1.325\\text{ g}$"
+    },
+    "correct_ans": "A",
+    "explanation": "আমরা জানি,\n$$W = \\frac{S \\times M \\times V}{1000}$$\nএখানে,\n- মোলারিটি $S = 0.1\\text{ M}$\n- $\\text{Na}_2\\text{CO}_3$ এর আণবিক ভর $M = (23 \\times 2) + 12 + (16 \\times 3) = 106\\text{ g/mol}$\n- আয়তন $V = 250\\text{ mL}$\n\nঅতএব, $W = \\frac{0.1 \\times 106 \\times 250}{1000} = 2.65\\text{ g}$।",
+    "explanation_latex": "W = \\frac{0.1 \\times 106 \\times 250}{1000} = 2.65\\text{ g}",
+    "tags": ["DU 23-24", "GST 22-23", "Varsity A"],
+    "star_rating": 2,
+    "type": "mcq",
+    "difficulty": "easy"
+  }
+]
+```
+
+---
+
+### উদাহরণ ৩: উচ্চতর গণিত অন্তরীকরণ প্রশ্ন (Differentiation)
+
+```json
+[
+  {
+    "id": "q_math1_ch9_001",
+    "subject_id": "math_1",
+    "subject_name": "উচ্চতর গণিত ১ম পত্র",
+    "paper": "1st",
+    "chapter_id": "math1_ch9",
+    "chapter_name": "অন্তরীকরণ",
+    "topic_id": "m1c9_s3",
+    "topic_name": "স্পর্শক ও অভিলম্বের ঢাল",
+    "category": "engineering",
+    "question_text": "$y = x^3 - 3x^2 + 2x$ বক্ররেখার মূলবিন্দুতে স্পর্শকের ঢাল কত?",
+    "math_formula_latex": "m = \\left. \\frac{dy}{dx} \\right|_{(0,0)}",
+    "options": {
+      "A": "$0$",
+      "B": "$1$",
+      "C": "$2$",
+      "D": "$-3$"
+    },
+    "correct_ans": "C",
+    "explanation": "প্রদত্ত বক্ররেখা: $y = x^3 - 3x^2 + 2x$\n$x$-এর সাপেক্ষে অন্তরীকরণ করে পাই:\n$$\\frac{dy}{dx} = 3x^2 - 6x + 2$$\nমূলবিন্দু $(0, 0)$-তে স্পর্শকের ঢাল:\n$$m = \\left. \\frac{dy}{dx} \\right|_{(0,0)} = 3(0)^2 - 6(0) + 2 = 2$$\nসুতরাং সঠিক উত্তর (C)।",
+    "explanation_latex": "\\frac{dy}{dx} = 3x^2 - 6x + 2 \\implies m = 2",
+    "tags": ["BUET 20-21", "CKRUET 22-23", "Engineering"],
+    "star_rating": 3,
+    "type": "mcq",
+    "difficulty": "medium"
+  }
+]
+```
+
+---
+
+## ৬. ডেটাবেজে সরাসরি ইমপোর্ট ও যাচাইকরণ পদ্ধতি (Batch Upload Workflow)
+
+AI থেকে প্রাপ্ত JSON ডেটা প্রজেক্টে যুক্ত করার ২টি সহজ পদ্ধতি রয়েছে:
+
+### পদ্ধতি ১: অ্যাডমিন প্যানেল সরাসরি ইমপোর্ট (প্রস্তাবিত)
+1. ব্রাউজারে `/admin` পেজে যান এবং অ্যাডমিন পাসওয়ার্ড দিয়ে প্রবেশ করুন।
+2. **"প্রশ্ন ব্যাংক"** বা **"Batch Upload"** ট্যাবে ক্লিক করুন।
+3. AI থেকে প্রাপ্ত JSON ফাইল বা টেক্সট পেস্ট করে **"Upload / Save"** বাটনে ক্লিক করুন।
+4. সিস্টেম Zod ভ্যালিডেশন স্কিমার মাধ্যমে স্বয়ংক্রিয়ভাবে ডেটা যাচাই করে ডাটাবেজে স্টোর করবে।
+
+### পদ্ধতি ২: সরাসরি API কল (`/api/admin/questions/bulk`)
+`POST /api/admin/questions/bulk` এন্ডপয়েন্টে JSON পে-লোড পাঠান:
+```bash
+curl -X POST https://your-domain.com/api/admin/questions/bulk \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_ADMIN_JWT" \
+  -d @questions_extracted.json
+```
+
+---
+
+## ৭. ডেটা ভ্যালিডেশন চেকলিস্ট (Pre-Upload Validation)
+
+- [x] JSON ফরম্যাট সিনট্যাক্স পুরোপুরি ভ্যালিড (কোনো ট্রেইলিং কমা নেই)।
+- [x] `correct_ans` ফিল্ডে শুধুমাত্র `"A"`, `"B"`, `"C"`, বা `"D"` দেওয়া আছে।
+- [x] `options` এ ৪টি অপশন বিদ্যমান।
+- [x] `subject_id` ও `chapter_id` ৩ নং সেকশনের তালিকার সাথে মিলে।
+- [x] ল্যাটেক্স সূত্রের ব্যাকস্ল্যাশ যথাযথভাবে এস্কেপ করা হয়েছে (`\\frac`, `\\sqrt`).
+- [x] TikZ কোড থাকলে `\begin{tikzpicture}` ও `\end{tikzpicture}` ট্যাগ যুক্ত আছে।
