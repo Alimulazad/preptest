@@ -33,6 +33,35 @@ import {
   off,
 } from 'firebase/database';
 
+// ==========================================
+// FIREBASE HELPER: REMOVE UNDEFINED PROPERTIES
+// ==========================================
+
+/**
+ * Recursively cleans an object to ensure no `undefined` values are sent to Firebase RTDB
+ */
+export function sanitizeFirebasePayload<T>(obj: T): T {
+  if (obj === null || obj === undefined) {
+    return null as any;
+  }
+  if (Array.isArray(obj)) {
+    return obj.map((item) => sanitizeFirebasePayload(item)) as any;
+  }
+  if (typeof obj === 'object') {
+    const cleaned: any = {};
+    for (const [key, value] of Object.entries(obj)) {
+      if (value !== undefined) {
+        cleaned[key] = sanitizeFirebasePayload(value);
+      }
+    }
+    return cleaned;
+  }
+  return obj;
+}
+
+export type { FirebaseUser, ConfirmationResult };
+export { RecaptchaVerifier };
+
 // User's provided Firebase configuration for PrepTest
 export const firebaseConfig = {
   apiKey: "AIzaSyAyYdu_2_OcXlIAl9EFn0a2mx3G09lCuyc",
@@ -120,10 +149,19 @@ export async function signOutFirebase(): Promise<void> {
  * Create a reCAPTCHA verifier for Phone OTP
  */
 export function initPhoneRecaptcha(containerId: string): RecaptchaVerifier {
+  if (typeof document !== 'undefined') {
+    const el = document.getElementById(containerId);
+    if (el) {
+      el.innerHTML = '';
+    }
+  }
   return new RecaptchaVerifier(firebaseAuth, containerId, {
     size: 'invisible',
     callback: () => {
       // reCAPTCHA solved
+    },
+    'expired-callback': () => {
+      console.warn('reCAPTCHA expired, please retry OTP');
     },
   });
 }
@@ -197,7 +235,7 @@ export function setUserOnline(userData: Partial<UserPresenceData> & { userId: st
         });
 
         // Set online status now
-        set(userPresenceRef, {
+        set(userPresenceRef, sanitizeFirebasePayload({
           userId: userData.userId,
           name: userData.name || 'শিক্ষার্থী',
           phone: userData.phone || '',
@@ -211,7 +249,7 @@ export function setUserOnline(userData: Partial<UserPresenceData> & { userId: st
           online: true,
           lastActive: serverTimestamp(),
           joinedAt: Date.now(),
-        });
+        }));
       }
     });
 
@@ -577,14 +615,22 @@ export async function sendAdminBroadcastNotification(
   const id = newNotifRef.key || `notif_${Date.now()}`;
 
   const payload: AdminBroadcastNotification = {
-    ...notification,
     id,
+    title: (notification.title || '').trim(),
+    message: (notification.message || '').trim(),
+    type: notification.type || 'info',
+    targetAudience: notification.targetAudience || 'all',
+    actionLink: notification.actionLink?.trim() || '',
+    actionText: notification.actionText?.trim() || '',
+    sentBy: notification.sentBy || 'PrepTest Admin',
     createdAt: Date.now(),
   };
 
-  await set(newNotifRef, payload);
+  const safePayload = sanitizeFirebasePayload(payload);
+
+  await set(newNotifRef, safePayload);
   // Also update latest notification pointer for fast user triggers
-  await set(ref(firebaseRtdb, 'notifications/latest'), payload);
+  await set(ref(firebaseRtdb, 'notifications/latest'), safePayload);
 
   return id;
 }

@@ -32,10 +32,59 @@ import {
   signUpWithEmailPassword,
   signInAsGuest,
   sendResetEmail,
+  initPhoneRecaptcha,
+  sendPhoneOtp,
+  ConfirmationResult,
+  RecaptchaVerifier,
 } from '../services/firebase';
 
 interface GatekeeperAuthScreenProps {
   onSuccess: (user: UserType, progress: UserProgress) => void;
+}
+
+/**
+ * Translates Firebase Auth error codes into clear, helpful Bengali messages
+ */
+function getFirebaseErrorMessage(err: any): string {
+  if (!err) return 'প্রক্রিয়াকরণে সমস্যা হয়েছে। আবার চেষ্টা করুন।';
+  const code = err.code || '';
+  switch (code) {
+    case 'auth/popup-closed-by-user':
+      return 'সাইন-ইন পপ-আপ উইন্ডো বন্ধ করা হয়েছে। আবার চেষ্টা করুন।';
+    case 'auth/popup-blocked':
+      return 'ব্রাউজারে পপ-আপ ব্লক করা রয়েছে। অনুগ্রহ করে ব্রাউজারের পপ-আপ অনুমোদন করুন।';
+    case 'auth/cancelled-popup-request':
+      return 'পূর্ববর্তী সাইন-ইন প্রক্রিয়া বাতিল হয়েছে।';
+    case 'auth/user-not-found':
+      return 'এই একাউন্টে কোনো ব্যবহারকারী খুঁজে পাওয়া যায়নি। অনুগ্রহ করে রেজিস্টার করুন।';
+    case 'auth/wrong-password':
+    case 'auth/invalid-credential':
+      return 'মোবাইল নম্বর/ইমেইল অথবা পাসওয়ার্ড সঠিক নয়।';
+    case 'auth/email-already-in-use':
+      return 'এই ইমেইলটি দিয়ে ইতিমধ্যে একটি একাউন্ট খোলা রয়েছে। অনুগ্রহ করে লগইন করুন।';
+    case 'auth/invalid-phone-number':
+      return 'মোবাইল নম্বরটি সঠিক নয়। অনুগ্রহ করে সঠিক বাংলাদেশী নম্বর (যেমন: 017xxxxxxxx) লিখুন।';
+    case 'auth/missing-phone-number':
+      return 'মোবাইল নম্বর প্রদান করুন।';
+    case 'auth/quota-exceeded':
+      return 'আজকের মতো এসএমএস ওটিপি পাঠানোর সীমা অতিক্রম হয়েছে। অনুগ্রহ করে ইমেইল/পাসওয়ার্ড দিয়ে প্রবেশ করুন।';
+    case 'auth/too-many-requests':
+      return 'অতিরিক্ত অনুরোধের কারণে সাময়িকভাবে সেবা স্থগিত রয়েছে। কিছুক্ষণ পর আবার চেষ্টা করুন।';
+    case 'auth/invalid-verification-code':
+      return 'ভেরিফিকেশন কোডটি সঠিক নয়। অনুগ্রহ করে মোবাইলে আসা ৬-ডিজিট কোডটি যাচাই করুন।';
+    case 'auth/code-expired':
+      return 'ওটিপি কোডের মেয়াদ শেষ হয়েছে। অনুগ্রহ করে আবার নতুন ওটিপি পাঠান।';
+    case 'auth/weak-password':
+      return 'পাসওয়ার্ড দুর্বল। কমপক্ষে ৬ অক্ষরের শক্তিশালী পাসওয়ার্ড দিন।';
+    case 'auth/unauthorized-domain':
+      return 'Firebase Console এ এই ডোমেইনটি Authorized Domains তালিকায় যুক্ত করা নেই।';
+    case 'auth/operation-not-allowed':
+      return 'Firebase Console এ এই সাইন-ইন মাধ্যমটি (Google/Facebook/Phone) সক্রিয় (Enable) করা নেই।';
+    case 'auth/account-exists-with-different-credential':
+      return 'এই ইমেইলটি অন্য একটি সাইন-ইন প্রোভাইডারের সাথে ইতিমধ্যে যুক্ত আছে।';
+    default:
+      return err.message || 'একটি অপ্রত্যাশিত সমস্যা হয়েছে। অনুগ্রহ করে আবার চেষ্টা করুন।';
+  }
 }
 
 // Google Official 4-color Vector Icon
@@ -131,12 +180,14 @@ export const GatekeeperAuthScreen: React.FC<GatekeeperAuthScreenProps> = ({ onSu
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [shakeTrigger, setShakeTrigger] = useState(0);
 
-  // Phone OTP Modal States
+  // Phone OTP Modal States & Firebase Recaptcha
   const [isPhoneOtpModalOpen, setIsPhoneOtpModalOpen] = useState(false);
   const [otpPhone, setOtpPhone] = useState('');
   const [otpCode, setOtpCode] = useState('');
   const [isOtpSent, setIsOtpSent] = useState(false);
   const [otpTimer, setOtpTimer] = useState(0);
+  const [confirmationResult, setConfirmationResult] = useState<ConfirmationResult | null>(null);
+  const recaptchaVerifierRef = useRef<RecaptchaVerifier | null>(null);
 
   // Forgot Password Modal
   const [isResetModalOpen, setIsResetModalOpen] = useState(false);
@@ -159,7 +210,7 @@ export const GatekeeperAuthScreen: React.FC<GatekeeperAuthScreenProps> = ({ onSu
     setShakeTrigger((prev) => prev + 1);
   };
 
-  // Google Sign-In Handler
+  // Google Sign-In Handler with Authentic Firebase Auth
   const handleGoogleSignIn = async () => {
     setErrorMessage(null);
     setSuccessMessage('গুগল অ্যাকাউন্ট কানেক্ট করা হচ্ছে...');
@@ -167,22 +218,19 @@ export const GatekeeperAuthScreen: React.FC<GatekeeperAuthScreenProps> = ({ onSu
     setLoadingAction('google');
 
     try {
-      let fbUser: any = null;
-      try {
-        fbUser = await signInWithGoogle();
-      } catch (fbErr: any) {
-        console.warn('Firebase Google Popup Notice, switching to direct seamless sync:', fbErr);
+      const fbUser = await signInWithGoogle();
+      if (!fbUser) {
+        throw new Error('গুগল অ্যাকাউন্ট সাইন-ইন সম্পন্ন হয়নি।');
       }
 
-      const email = fbUser?.email || 'student.google@preptest.bd';
-      const displayName = fbUser?.displayName || 'গুগল শিক্ষার্থী';
-      const uid = fbUser?.uid || `g_${Date.now()}`;
-      const photoURL = fbUser?.photoURL;
+      const email = fbUser.email || '';
+      const displayName = fbUser.displayName || 'গুগল শিক্ষার্থী';
+      const uid = fbUser.uid;
 
       const authRes = await socialSyncAuthApi({
         uid,
-        email,
-        phone: email,
+        email: email || `${uid}@google.preptest.bd`,
+        phone: email || uid,
         name: displayName,
         provider: 'google',
         avatar: '🧑‍🎓',
@@ -190,22 +238,23 @@ export const GatekeeperAuthScreen: React.FC<GatekeeperAuthScreenProps> = ({ onSu
         targetUniversity: targetUni,
         targetUnit: "'ক' ইউনিট (বিজ্ঞান)",
         examYear: 'HSC-26',
-        college: 'ঢাকা কলেজ',
+        college: college || 'ঢাকা কলেজ',
       });
 
-      setSuccessMessage('গুগল সাইন-ইন সফল হয়েছে! স্বাগতম!');
+      setSuccessMessage(`স্বাগতম, ${displayName}! গুগল সাইন-ইন সফল হয়েছে!`);
       setTimeout(() => {
         onSuccess(authRes.user, authRes.progress);
       }, 400);
     } catch (err: any) {
-      triggerError(err.message || 'গুগল সাইন-ইন করতে সমস্যা হয়েছে। আবার চেষ্টা করুন।');
+      console.error('Google Sign-In Error:', err);
+      triggerError(getFirebaseErrorMessage(err));
     } finally {
       setIsLoading(false);
       setLoadingAction('');
     }
   };
 
-  // Facebook Sign-In Handler
+  // Facebook Sign-In Handler with Authentic Firebase Auth
   const handleFacebookSignIn = async () => {
     setErrorMessage(null);
     setSuccessMessage('ফেসবুক অ্যাকাউন্ট কানেক্ট করা হচ্ছে...');
@@ -213,21 +262,19 @@ export const GatekeeperAuthScreen: React.FC<GatekeeperAuthScreenProps> = ({ onSu
     setLoadingAction('facebook');
 
     try {
-      let fbUser: any = null;
-      try {
-        fbUser = await signInWithFacebook();
-      } catch (fbErr: any) {
-        console.warn('Firebase Facebook notice, switching to seamless sync:', fbErr);
+      const fbUser = await signInWithFacebook();
+      if (!fbUser) {
+        throw new Error('ফেসবুক অ্যাকাউন্ট সাইন-ইন সম্পন্ন হয়নি।');
       }
 
-      const email = fbUser?.email || 'student.fb@preptest.bd';
-      const displayName = fbUser?.displayName || 'ফেসবুক শিক্ষার্থী';
-      const uid = fbUser?.uid || `fb_${Date.now()}`;
+      const email = fbUser.email || '';
+      const displayName = fbUser.displayName || 'ফেসবুক শিক্ষার্থী';
+      const uid = fbUser.uid;
 
       const authRes = await socialSyncAuthApi({
         uid,
-        email,
-        phone: email,
+        email: email || `${uid}@facebook.preptest.bd`,
+        phone: email || uid,
         name: displayName,
         provider: 'facebook',
         avatar: '🎓',
@@ -235,15 +282,16 @@ export const GatekeeperAuthScreen: React.FC<GatekeeperAuthScreenProps> = ({ onSu
         targetUniversity: targetUni,
         targetUnit: "'ক' ইউনিট (বিজ্ঞান)",
         examYear: 'HSC-26',
-        college: 'ঢাকা কলেজ',
+        college: college || 'ঢাকা কলেজ',
       });
 
-      setSuccessMessage('ফেসবুক সাইন-ইন সফল হয়েছে!');
+      setSuccessMessage(`স্বাগতম, ${displayName}! ফেসবুক সাইন-ইন সফল হয়েছে!`);
       setTimeout(() => {
         onSuccess(authRes.user, authRes.progress);
       }, 400);
     } catch (err: any) {
-      triggerError(err.message || 'ফেসবুক সাইন-ইন সম্পন্ন করা যায়নি। আবার চেষ্টা করুন।');
+      console.error('Facebook Sign-In Error:', err);
+      triggerError(getFirebaseErrorMessage(err));
     } finally {
       setIsLoading(false);
       setLoadingAction('');
@@ -274,53 +322,70 @@ export const GatekeeperAuthScreen: React.FC<GatekeeperAuthScreenProps> = ({ onSu
     }
   };
 
-  // Phone OTP Trigger & Verification
+  // Phone OTP Trigger with Real Firebase SMS Dispatch
   const handleSendOtp = async (e: React.FormEvent) => {
     e.preventDefault();
+    setErrorMessage(null);
     const cleanPhone = otpPhone.trim();
-    if (!cleanPhone || cleanPhone.length < 10) {
-      triggerError('সঠিক মোবাইল নম্বর দিন (যেমন: 01712345678)');
+    if (!cleanPhone || cleanPhone.replace(/[^0-9]/g, '').length < 10) {
+      triggerError('সঠিক বাংলাদেশী মোবাইল নম্বর দিন (যেমন: 01712345678)');
       return;
     }
 
     setIsLoading(true);
     setLoadingAction('otp_send');
     try {
-      // Simulate fast SMS OTP dispatch
-      setTimeout(() => {
-        setIsOtpSent(true);
-        setOtpTimer(60);
-        setIsLoading(false);
-        setLoadingAction('');
-        setSuccessMessage(`৬-ডিজিটের কোড পাঠানো হয়েছে: ${cleanPhone}`);
-      }, 700);
+      if (!recaptchaVerifierRef.current) {
+        recaptchaVerifierRef.current = initPhoneRecaptcha('recaptcha-container');
+      }
+      const confirmation = await sendPhoneOtp(cleanPhone, recaptchaVerifierRef.current);
+      setConfirmationResult(confirmation);
+      setIsOtpSent(true);
+      setOtpTimer(60);
+      setSuccessMessage(`৬-ডিজিটের এসএমএস ওটিপি পাঠানো হয়েছে: ${cleanPhone}`);
     } catch (err: any) {
-      triggerError('ওটিপি পাঠাতে সমস্যা হয়েছে।');
+      console.error('Phone OTP Send Error:', err);
+      recaptchaVerifierRef.current = null;
+      triggerError(getFirebaseErrorMessage(err));
+    } finally {
       setIsLoading(false);
+      setLoadingAction('');
     }
   };
 
+  // Verify Phone OTP with Real Firebase Confirmation
   const handleVerifyOtp = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!otpCode || otpCode.trim().length < 4) {
+    setErrorMessage(null);
+    if (!otpCode || otpCode.trim().length < 6) {
       triggerError('সঠিক ৬-ডিজিট ভেরিফিকেশন কোড দিন');
+      return;
+    }
+
+    if (!confirmationResult) {
+      triggerError('ওটিপি সেশনের মেয়াদ শেষ হয়েছে। পুনরায় ওটিপি পাঠান।');
       return;
     }
 
     setIsLoading(true);
     setLoadingAction('otp_verify');
     try {
-      const cleanPhone = otpPhone.trim();
+      const result = await confirmationResult.confirm(otpCode.trim());
+      const fbUser = result.user;
+      const cleanPhone = fbUser.phoneNumber || otpPhone.trim();
+
       const authRes = await socialSyncAuthApi({
+        uid: fbUser.uid,
         phone: cleanPhone,
-        name: `শিক্ষার্থী (${cleanPhone.slice(-4)})`,
+        email: fbUser.email || `${cleanPhone.replace(/[^0-9]/g, '')}@preptest.bd`,
+        name: fbUser.displayName || `শিক্ষার্থী (${cleanPhone.slice(-4)})`,
         provider: 'phone',
         avatar: '📱',
         avatarColor: '#0A2540',
-        targetUniversity: 'du_a',
+        targetUniversity: targetUni,
         targetUnit: "'ক' ইউনিট (বিজ্ঞান)",
         examYear: 'HSC-26',
-        college: 'ঢাকা কলেজ',
+        college: college || 'ঢাকা কলেজ',
       });
 
       setSuccessMessage('ওটিপি যাচাই সফল হয়েছে! স্বাগতম!');
@@ -329,7 +394,8 @@ export const GatekeeperAuthScreen: React.FC<GatekeeperAuthScreenProps> = ({ onSu
         onSuccess(authRes.user, authRes.progress);
       }, 400);
     } catch (err: any) {
-      triggerError('কোডটি সঠিক নয়। পুনরায় চেষ্টা করুন।');
+      console.error('Phone OTP Verify Error:', err);
+      triggerError(getFirebaseErrorMessage(err));
     } finally {
       setIsLoading(false);
       setLoadingAction('');
@@ -339,6 +405,7 @@ export const GatekeeperAuthScreen: React.FC<GatekeeperAuthScreenProps> = ({ onSu
   // Password Reset Handler
   const handlePasswordReset = async (e: React.FormEvent) => {
     e.preventDefault();
+    setErrorMessage(null);
     const email = resetEmail.trim();
     if (!email || !email.includes('@')) {
       triggerError('সঠিক ইমেইল এড্রেস লিখুন');
@@ -347,13 +414,14 @@ export const GatekeeperAuthScreen: React.FC<GatekeeperAuthScreenProps> = ({ onSu
 
     setIsLoading(true);
     try {
-      await sendResetEmail(email).catch(() => {});
+      await sendResetEmail(email);
       setSuccessMessage(`পাসওয়ার্ড রিসেট লিঙ্ক পাঠানো হয়েছে: ${email}`);
       setTimeout(() => {
         setIsResetModalOpen(false);
-      }, 1500);
+      }, 2000);
     } catch (err: any) {
-      triggerError('রিসেট লিঙ্ক পাঠাতে ব্যর্থ হয়েছে।');
+      console.error('Reset password error:', err);
+      triggerError(getFirebaseErrorMessage(err));
     } finally {
       setIsLoading(false);
     }
@@ -370,8 +438,8 @@ export const GatekeeperAuthScreen: React.FC<GatekeeperAuthScreenProps> = ({ onSu
       triggerError('অনুগ্রহ করে মোবাইল নম্বর বা ইমেইল লিখুন');
       return;
     }
-    if (!password || password.length < 4) {
-      triggerError('পাসওয়ার্ড কমপক্ষে ৪ অক্ষরের হতে হবে');
+    if (!password || password.length < 6) {
+      triggerError('পাসওয়ার্ড কমপক্ষে ৬ অক্ষরের হতে হবে');
       return;
     }
     if (mode === 'register' && !name.trim()) {
@@ -387,8 +455,12 @@ export const GatekeeperAuthScreen: React.FC<GatekeeperAuthScreenProps> = ({ onSu
       const emailForFb = isEmail ? cleanInput : `${cleanInput.replace(/[^0-9]/g, '')}@preptest.bd`;
 
       if (mode === 'login') {
-        // Try Firebase concurrently
-        signInWithEmailPassword(emailForFb, password).catch(() => {});
+        // Try Firebase Authentication
+        try {
+          await signInWithEmailPassword(emailForFb, password);
+        } catch (fbErr: any) {
+          console.warn('Firebase login check:', fbErr);
+        }
 
         // Local SQLite / Backend Login
         const res = await loginUserApi({
@@ -396,13 +468,20 @@ export const GatekeeperAuthScreen: React.FC<GatekeeperAuthScreenProps> = ({ onSu
           password,
         });
 
-        setSuccessMessage('লগইন সফল হয়েছে! স্বাগত!');
+        setSuccessMessage('লগইন সফল হয়েছে! স্বাগতম!');
         setTimeout(() => {
           onSuccess(res.user, res.progress);
         }, 350);
       } else {
         // Register Mode
-        signUpWithEmailPassword(emailForFb, password).catch(() => {});
+        try {
+          await signUpWithEmailPassword(emailForFb, password);
+        } catch (fbErr: any) {
+          if (fbErr.code === 'auth/email-already-in-use') {
+            throw new Error('এই মোবাইল নম্বর বা ইমেইল দিয়ে ইতিমধ্যে একটি অ্যাকাউন্ট খোলা আছে। অনুগ্রহ করে লগইন করুন।');
+          }
+          console.warn('Firebase sign up notice:', fbErr);
+        }
 
         const res = await registerUserApi({
           phone: cleanInput,
@@ -430,7 +509,7 @@ export const GatekeeperAuthScreen: React.FC<GatekeeperAuthScreenProps> = ({ onSu
         }, 500);
       }
     } catch (err: any) {
-      triggerError(err.message || 'লগইন বা রেজিস্ট্রেশন সম্পন্ন করা সম্ভব হয়নি। তথ্য যাচাই করে আবার চেষ্টা করুন।');
+      triggerError(getFirebaseErrorMessage(err));
     } finally {
       setIsLoading(false);
       setLoadingAction('');
@@ -959,6 +1038,8 @@ export const GatekeeperAuthScreen: React.FC<GatekeeperAuthScreenProps> = ({ onSu
           </div>
         )}
       </AnimatePresence>
+      {/* Firebase Phone reCAPTCHA Container (invisible) */}
+      <div id="recaptcha-container" className="hidden"></div>
     </div>
   );
 };

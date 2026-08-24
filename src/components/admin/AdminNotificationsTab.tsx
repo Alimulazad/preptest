@@ -83,9 +83,9 @@ export const AdminNotificationsTab: React.FC = () => {
         message: message.trim(),
         type,
         targetAudience,
-        actionLink: actionLink.trim() || undefined,
-        actionText: actionText.trim() || undefined,
-        sentBy: 'JACHAI Admin Hub',
+        actionLink: actionLink.trim() || '',
+        actionText: actionText.trim() || '',
+        sentBy: 'PrepTest Admin Hub',
       });
 
       toast.success('📢 সকল সক্রিয় শিক্ষার্থীর কাছে নোটিফিকেশন সম্প্রচারিত হয়েছে!');
