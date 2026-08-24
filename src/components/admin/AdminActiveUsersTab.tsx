@@ -32,8 +32,8 @@ export const AdminActiveUsersTab: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'online' | 'idle' | 'registered' | 'guest'>('all');
-  const [refreshInterval, setRefreshInterval] = useState<number>(120); // in seconds (0 = off), default 2 min
-  const [secondsUntilNextRefresh, setSecondsUntilNextRefresh] = useState(120);
+  const [refreshInterval, setRefreshInterval] = useState<number>(0); // in seconds (0 = off by default for zero latency)
+  const [secondsUntilNextRefresh, setSecondsUntilNextRefresh] = useState(0);
   const [selectedUser, setSelectedUser] = useState<ActiveUserItem | null>(null);
 
   const loadActiveUsers = useCallback(async (isManualClick = false) => {
@@ -187,13 +187,11 @@ export const AdminActiveUsersTab: React.FC = () => {
               aria-label="অটো রিফ্রেশ ব্যবধান"
               className="bg-transparent border-0 text-white font-medium focus:ring-0 cursor-pointer text-xs pr-2"
             >
+              <option value={0} className="bg-slate-900">বন্ধ (ডিফল্ট - জিরো লেটেন্সি)</option>
+              <option value={30} className="bg-slate-900">৩০ সেকেন্ড (30s)</option>
               <option value={60} className="bg-slate-900">১ মিনিট (60s)</option>
               <option value={120} className="bg-slate-900">২ মিনিট (120s)</option>
               <option value={300} className="bg-slate-900">৫ মিনিট (300s)</option>
-              <option value={600} className="bg-slate-900">১০ মিনিট (600s)</option>
-              <option value={1200} className="bg-slate-900">২০ মিনিট (1200s)</option>
-              <option value={1800} className="bg-slate-900">৩০ মিনিট (1800s)</option>
-              <option value={0} className="bg-slate-900">বন্ধ (ম্যানুয়াল)</option>
             </select>
             {refreshInterval > 0 && (
               <span className="text-[10px] text-slate-500 font-mono">({formatCountdown(secondsUntilNextRefresh)})</span>

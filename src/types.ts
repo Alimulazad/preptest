@@ -311,6 +311,8 @@ export interface AdminApiKeyConfig {
   label?: string;
   provider: 'openrouter' | 'gemini';
   status: 'active' | 'rate_limited' | 'error' | 'untested';
+  is_primary?: boolean;
+  priority?: number;
   lastTested?: number;
   last_checked_at?: string;
   latencyMs?: number;
@@ -320,6 +322,14 @@ export interface AdminApiKeyConfig {
   successCount?: number;
   success_count?: number;
   created_at?: string | number;
+}
+
+export interface AdminAIConfig {
+  preferredModel: string;
+  autoFailoverEnabled: boolean;
+  primaryKeyId: string | null;
+  primaryKeyLabel: string | null;
+  totalKeys: number;
 }
 
 export interface AdminSystemStats {

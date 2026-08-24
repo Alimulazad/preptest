@@ -843,11 +843,13 @@ app.get('/api/admin/health/openrouter', authenticateAdmin, async (req: Request, 
 // GET /api/admin/keys - Retrieve managed API keys (masked for security - NO raw key exposed)
 app.get('/api/admin/keys', authenticateAdmin, async (req: Request, res: Response) => {
   try {
-    const keysResponse = trackedOpenRouterKeys.map((k) => ({
+    const keysResponse = trackedOpenRouterKeys.map((k, idx) => ({
       id: k.id,
       label: k.label || `OpenRouter Key`,
       provider: k.provider,
       status: k.status,
+      is_primary: k.is_primary ?? (idx === 0),
+      priority: k.priority ?? (idx + 1),
       lastTested: k.lastTested,
       latencyMs: k.latencyMs,
       errorCount: k.errorCount,
@@ -877,6 +879,92 @@ app.post('/api/admin/keys/reveal', authenticateAdmin, async (req: Request, res: 
   }
 });
 
+// POST /api/admin/keys/set-primary - Set a specific key as the active primary key
+app.post('/api/admin/keys/set-primary', authenticateAdmin, async (req: Request, res: Response) => {
+  try {
+    const { id } = req.body;
+    if (!id) {
+      return res.status(400).json({ error: 'Key ID is required' });
+    }
+
+    const keyIndex = trackedOpenRouterKeys.findIndex((k) => k.id === id);
+    if (keyIndex === -1) {
+      return res.status(404).json({ error: 'নির্বাচিত কী পাওয়া যায়নি' });
+    }
+
+    // Set chosen key as primary and all others as false
+    trackedOpenRouterKeys = trackedOpenRouterKeys.map((k) => ({
+      ...k,
+      is_primary: k.id === id,
+    }));
+
+    await setAdminSetting('openrouter_keys_config', JSON.stringify(trackedOpenRouterKeys));
+
+    return res.json({
+      success: true,
+      message: 'প্রাইমারি এপিআই কী সফলভাবে নির্বাচন করা হয়েছে',
+      primaryKeyId: id,
+      totalKeys: trackedOpenRouterKeys.length,
+    });
+  } catch (error: any) {
+    console.error('Error setting primary key:', error);
+    return res.status(500).json({ error: 'প্রাইমারি কী সেট করতে ব্যর্থ', details: error.message });
+  }
+});
+
+// GET /api/admin/ai-config - Get current AI Model & Failover Settings
+app.get('/api/admin/ai-config', authenticateAdmin, async (req: Request, res: Response) => {
+  try {
+    const preferredModel = (await getAdminSetting('openrouter_preferred_model')) || 'openrouter/free';
+    const autoFailoverSetting = (await getAdminSetting('ai_auto_failover_enabled')) || 'true';
+    const primaryKey = trackedOpenRouterKeys.find((k) => k.is_primary) || trackedOpenRouterKeys[0];
+
+    return res.json({
+      success: true,
+      config: {
+        preferredModel,
+        autoFailoverEnabled: autoFailoverSetting === 'true',
+        primaryKeyId: primaryKey?.id || null,
+        primaryKeyLabel: primaryKey?.label || null,
+        totalKeys: trackedOpenRouterKeys.length,
+      },
+    });
+  } catch (error: any) {
+    return res.status(500).json({ error: 'AI কনফিগ লোড করতে ব্যর্থ', details: error.message });
+  }
+});
+
+// POST /api/admin/ai-config - Update preferred model and failover settings
+app.post('/api/admin/ai-config', authenticateAdmin, async (req: Request, res: Response) => {
+  try {
+    const { preferredModel, autoFailoverEnabled, primaryKeyId } = req.body;
+
+    if (preferredModel && typeof preferredModel === 'string') {
+      await setAdminSetting('openrouter_preferred_model', preferredModel.trim());
+    }
+
+    if (typeof autoFailoverEnabled === 'boolean') {
+      await setAdminSetting('ai_auto_failover_enabled', autoFailoverEnabled ? 'true' : 'false');
+    }
+
+    if (primaryKeyId && typeof primaryKeyId === 'string') {
+      trackedOpenRouterKeys = trackedOpenRouterKeys.map((k) => ({
+        ...k,
+        is_primary: k.id === primaryKeyId,
+      }));
+      await setAdminSetting('openrouter_keys_config', JSON.stringify(trackedOpenRouterKeys));
+    }
+
+    return res.json({
+      success: true,
+      message: 'AI কনফিগারেশন সফলভাবে আপডেট করা হয়েছে',
+    });
+  } catch (error: any) {
+    console.error('Error saving AI config:', error);
+    return res.status(500).json({ error: 'AI কনফিগ সংরক্ষণ ব্যর্থ', details: error.message });
+  }
+});
+
 // POST /api/admin/keys - Save/Update API keys list
 app.post('/api/admin/keys', authenticateAdmin, async (req: Request, res: Response) => {
   try {
@@ -886,19 +974,26 @@ app.post('/api/admin/keys', authenticateAdmin, async (req: Request, res: Respons
     }
 
     const updatedKeys: KeyHealth[] = keys
-      .filter((k: any) => k && (k.key || k.keyRaw))
+      .filter((k: any) => k && (k.key || k.keyRaw || k.key_full))
       .map((k: any, idx: number) => ({
         id: k.id || `key_${Date.now()}_${idx}`,
-        key: (k.keyRaw || k.key || '').trim(),
+        key: (k.key_full || k.keyRaw || k.key || '').trim(),
         label: k.label || `Key #${idx + 1}`,
         provider: k.provider || 'openrouter',
         status: k.status || 'untested',
+        is_primary: k.is_primary ?? (idx === 0),
+        priority: k.priority ?? (idx + 1),
         lastTested: k.lastTested,
         latencyMs: k.latencyMs,
         errorCount: k.errorCount || 0,
         successCount: k.successCount || 0,
       }))
       .filter((k: KeyHealth) => k.key.length > 5);
+
+    // If none is marked primary, make first one primary
+    if (updatedKeys.length > 0 && !updatedKeys.some((k) => k.is_primary)) {
+      updatedKeys[0].is_primary = true;
+    }
 
     trackedOpenRouterKeys = updatedKeys;
     await setAdminSetting('openrouter_keys_config', JSON.stringify(updatedKeys));
@@ -1683,6 +1778,8 @@ interface KeyHealth {
   label?: string;
   provider: 'openrouter' | 'gemini';
   status: 'active' | 'rate_limited' | 'error' | 'untested';
+  is_primary?: boolean;
+  priority?: number;
   lastTested?: number;
   latencyMs?: number;
   errorCount: number;
@@ -1697,6 +1794,10 @@ async function initializeTrackedKeys() {
     if (saved) {
       const parsed = JSON.parse(saved);
       if (Array.isArray(parsed) && parsed.length > 0) {
+        const hasPrimary = parsed.some((k: any) => k.is_primary);
+        if (!hasPrimary && parsed.length > 0) {
+          parsed[0].is_primary = true;
+        }
         trackedOpenRouterKeys = parsed;
         return;
       }
@@ -1720,6 +1821,8 @@ async function initializeTrackedKeys() {
     label: `OpenRouter Key #${idx + 1}`,
     provider: 'openrouter',
     status: 'untested',
+    is_primary: idx === 0,
+    priority: idx + 1,
     errorCount: 0,
     successCount: 0,
   }));
@@ -1737,13 +1840,31 @@ function getOpenRouterKeys(customKeys?: string[] | string): string[] {
   }
 
   if (trackedOpenRouterKeys.length > 0) {
-    keys.push(...trackedOpenRouterKeys.map((k) => k.key));
+    // 1. Manually selected Primary key first
+    const primary = trackedOpenRouterKeys.filter((k) => k.is_primary);
+    // 2. Other healthy keys ordered by lowest errorCount
+    const othersHealthy = trackedOpenRouterKeys
+      .filter((k) => !k.is_primary && k.status !== 'rate_limited')
+      .sort((a, b) => (a.errorCount || 0) - (b.errorCount || 0));
+    // 3. Rate limited / degraded keys as last resort fallback
+    const fallbackKeys = trackedOpenRouterKeys
+      .filter((k) => !k.is_primary && k.status === 'rate_limited');
+
+    const sortedTracked = [...primary, ...othersHealthy, ...fallbackKeys];
+    for (const item of sortedTracked) {
+      if (item.key && !keys.includes(item.key)) {
+        keys.push(item.key);
+      }
+    }
   }
 
   if (process.env.OPENROUTER_API_KEYS) {
-    keys.push(...process.env.OPENROUTER_API_KEYS.split(/[\n,]+/).map((k) => k.trim()).filter(Boolean));
+    const envList = process.env.OPENROUTER_API_KEYS.split(/[\n,]+/).map((k) => k.trim()).filter(Boolean);
+    for (const k of envList) {
+      if (!keys.includes(k)) keys.push(k);
+    }
   }
-  if (process.env.OPENROUTER_API_KEY) {
+  if (process.env.OPENROUTER_API_KEY && !keys.includes(process.env.OPENROUTER_API_KEY.trim())) {
     keys.push(process.env.OPENROUTER_API_KEY.trim());
   }
 

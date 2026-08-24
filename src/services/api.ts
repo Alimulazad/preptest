@@ -1453,6 +1453,47 @@ export async function saveAdminKeysApi(keys: AdminApiKeyConfig[]): Promise<{ suc
   return data;
 }
 
+export async function setAdminPrimaryKeyApi(id: string): Promise<{ success: boolean; message: string; primaryKeyId: string }> {
+  const res = await fetchWithRetry(getApiUrl('/api/admin/keys/set-primary'), {
+    method: 'POST',
+    headers: getAdminAuthHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify({ id }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'প্রাইমারি কী সেট করতে ব্যর্থ');
+  return data;
+}
+
+export async function fetchAdminAIConfigApi(): Promise<{
+  preferredModel: string;
+  autoFailoverEnabled: boolean;
+  primaryKeyId: string | null;
+  primaryKeyLabel: string | null;
+  totalKeys: number;
+}> {
+  const res = await fetchWithRetry(getApiUrl('/api/admin/ai-config'), {
+    headers: getAdminAuthHeaders(),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'AI কনফিগারেশন লোড করতে ব্যর্থ');
+  return data.config;
+}
+
+export async function updateAdminAIConfigApi(config: {
+  preferredModel?: string;
+  autoFailoverEnabled?: boolean;
+  primaryKeyId?: string;
+}): Promise<{ success: boolean; message: string }> {
+  const res = await fetchWithRetry(getApiUrl('/api/admin/ai-config'), {
+    method: 'POST',
+    headers: getAdminAuthHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify(config),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'AI কনফিগারেশন আপডেট করতে ব্যর্থ');
+  return data;
+}
+
 export async function testAdminKeyApi(params: { key?: string; id?: string }): Promise<{
   success: boolean;
   status: 'active' | 'rate_limited' | 'error';
