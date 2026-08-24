@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Key,
   ShieldCheck,
@@ -12,14 +12,25 @@ import {
   Clock,
   Save,
   Check,
-  ExternalLink,
   Cpu,
   Eye,
   EyeOff,
   Copy,
+  Star,
+  Sliders,
+  Sparkles,
+  ToggleLeft,
+  ToggleRight,
 } from 'lucide-react';
-import { AdminApiKeyConfig } from '../../types';
-import { testAdminKeyApi, saveAdminKeysApi, revealAdminKeyApi } from '../../services/api';
+import { AdminApiKeyConfig, AdminAIConfig } from '../../types';
+import {
+  testAdminKeyApi,
+  saveAdminKeysApi,
+  revealAdminKeyApi,
+  fetchAdminAIConfigApi,
+  updateAdminAIConfigApi,
+  setAdminPrimaryKeyApi,
+} from '../../services/api';
 
 interface AdminApiKeysTabProps {
   keys: AdminApiKeyConfig[];
@@ -39,6 +50,20 @@ export const AdminApiKeysTab: React.FC<AdminApiKeysTabProps> = ({
   const [saveSuccess, setSaveSuccess] = useState('');
   const [saveError, setSaveError] = useState('');
 
+  // AI Model & Failover state
+  const [aiConfig, setAiConfig] = useState<AdminAIConfig>({
+    preferredModel: 'openrouter/free',
+    autoFailoverEnabled: true,
+    primaryKeyId: null,
+    primaryKeyLabel: null,
+    totalKeys: 0,
+  });
+  const [isLoadingAiConfig, setIsLoadingAiConfig] = useState(false);
+  const [isSavingAiConfig, setIsSavingAiConfig] = useState(false);
+  const [selectedModel, setSelectedModel] = useState('openrouter/free');
+  const [customModelInput, setCustomModelInput] = useState('');
+  const [autoFailover, setAutoFailover] = useState(true);
+
   // Add Key Form
   const [newKeyString, setNewKeyString] = useState('');
   const [newKeyLabel, setNewKeyLabel] = useState('');
@@ -47,11 +72,37 @@ export const AdminApiKeysTab: React.FC<AdminApiKeysTabProps> = ({
   // Testing states
   const [testingKeyId, setTestingKeyId] = useState<string | null>(null);
   const [isTestingAll, setIsTestingAll] = useState(false);
+  const [settingPrimaryKeyId, setSettingPrimaryKeyId] = useState<string | null>(null);
 
   // Revealed keys cache
   const [revealedKeys, setRevealedKeys] = useState<Record<string, string>>({});
   const [revealingKeyId, setRevealingKeyId] = useState<string | null>(null);
   const [copiedKeyId, setCopiedKeyId] = useState<string | null>(null);
+
+  // Fetch AI config on mount
+  useEffect(() => {
+    loadAiConfig();
+  }, []);
+
+  const loadAiConfig = async () => {
+    try {
+      setIsLoadingAiConfig(true);
+      const conf = await fetchAdminAIConfigApi();
+      setAiConfig(conf);
+      setSelectedModel(conf.preferredModel || 'openrouter/free');
+      setAutoFailover(conf.autoFailoverEnabled);
+      if (
+        conf.preferredModel &&
+        !['openrouter/free', 'google/gemini-2.0-flash-exp:free', 'meta-llama/llama-3.3-70b-instruct:free', 'deepseek/deepseek-r1:free', 'qwen/qwen-2.5-72b-instruct:free'].includes(conf.preferredModel)
+      ) {
+        setCustomModelInput(conf.preferredModel);
+      }
+    } catch (err) {
+      console.error('Error loading AI config:', err);
+    } finally {
+      setIsLoadingAiConfig(false);
+    }
+  };
 
   const toggleRevealKey = async (id: string) => {
     if (revealedKeys[id]) {
@@ -61,7 +112,6 @@ export const AdminApiKeysTab: React.FC<AdminApiKeysTabProps> = ({
       return;
     }
 
-    // Check if key_full is already stored locally
     const existing = keyList.find((k) => k.id === id);
     if (existing?.key_full) {
       setRevealedKeys((prev) => ({ ...prev, [id]: existing.key_full! }));
@@ -85,7 +135,6 @@ export const AdminApiKeysTab: React.FC<AdminApiKeysTabProps> = ({
     setTimeout(() => setCopiedKeyId(null), 2000);
   };
 
-  // Synchronize when incoming props change
   React.useEffect(() => {
     setKeyList(keys);
   }, [keys]);
@@ -95,6 +144,7 @@ export const AdminApiKeysTab: React.FC<AdminApiKeysTabProps> = ({
     if (!newKeyString.trim()) return;
 
     const trimmedKey = newKeyString.trim();
+    const isFirstKey = keyList.length === 0;
     const newEntry: AdminApiKeyConfig = {
       id: `key_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`,
       provider: 'openrouter',
@@ -102,6 +152,7 @@ export const AdminApiKeysTab: React.FC<AdminApiKeysTabProps> = ({
       key_masked: `${trimmedKey.slice(0, 10)}...${trimmedKey.slice(-4)}`,
       key_full: trimmedKey,
       status: 'untested',
+      is_primary: isFirstKey,
       error_count: 0,
       success_count: 0,
       created_at: new Date().toISOString(),
@@ -116,6 +167,46 @@ export const AdminApiKeysTab: React.FC<AdminApiKeysTabProps> = ({
   const handleDeleteKey = (id: string) => {
     if (!window.confirm('আপনি কি এই এপিআই কী-টি তালিকা থেকে মুছে ফেলতে চান?')) return;
     setKeyList(keyList.filter((k) => k.id !== id));
+  };
+
+  const handleSetPrimaryKey = async (keyId: string) => {
+    setSettingPrimaryKeyId(keyId);
+    try {
+      await setAdminPrimaryKeyApi(keyId);
+      setKeyList((prev) =>
+        prev.map((k) => ({
+          ...k,
+          is_primary: k.id === keyId,
+        }))
+      );
+      setSaveSuccess('ম্যানুয়ালি প্রাইমারি এপিআই কী নির্বাচন সফল হয়েছে!');
+      setTimeout(() => setSaveSuccess(''), 3000);
+      loadAiConfig();
+    } catch (err: any) {
+      setSaveError(err.message || 'প্রাইমারি কী নির্বাচন ব্যর্থ');
+    } finally {
+      setSettingPrimaryKeyId(null);
+    }
+  };
+
+  const handleSaveAiConfig = async () => {
+    setIsSavingAiConfig(true);
+    setSaveSuccess('');
+    setSaveError('');
+    try {
+      const targetModel = selectedModel === 'custom' ? customModelInput.trim() : selectedModel;
+      await updateAdminAIConfigApi({
+        preferredModel: targetModel || 'openrouter/free',
+        autoFailoverEnabled: autoFailover,
+      });
+      setSaveSuccess('AI মডেল ও সুইচার কনফিগারেশন সংরক্ষিত হয়েছে!');
+      setTimeout(() => setSaveSuccess(''), 3000);
+      loadAiConfig();
+    } catch (err: any) {
+      setSaveError(err.message || 'AI কনফিগ সেভ করতে ব্যর্থ');
+    } finally {
+      setIsSavingAiConfig(false);
+    }
   };
 
   const handleTestSingleKey = async (keyItem: AdminApiKeyConfig) => {
@@ -182,13 +273,13 @@ export const AdminApiKeysTab: React.FC<AdminApiKeysTabProps> = ({
         <div>
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-50 text-blue-700 text-xs font-semibold mb-2">
             <Cpu className="w-3.5 h-3.5" />
-            রোবাস্ট এআই ফলব্যাক সিস্টেম
+            রোবাস্ট এআই ফলব্যাক ও সুইচার সেন্টার
           </div>
           <h2 className="text-xl font-bold text-slate-900">
-            ওপেনরাউটার মাল্টি-কি ও অটো-ফেইলওভার সেন্টার
+            ওপেনরাউটার মাল্টি-কি, মডেল সুইচার ও অটো-ফেইলওভার
           </h2>
           <p className="text-xs text-slate-600 mt-1 max-w-2xl leading-relaxed">
-            একাধিক OpenRouter API Key কনফিগার করে রাখুন। কোনো কি লিমিট (429) অতিক্রম করলে বা এরর পেলে সিস্টেম স্বয়ংক্রিয়ভাবে পরবর্তী কি-তে চলে যায়।
+            একাধিক OpenRouter API Key কনফিগার করে রাখুন। ম্যানুয়ালি পছন্দের প্রধান কী সিলেক্ট করতে পারবেন এবং কোনো কি লিমিট (429) বা ত্রুটি পেলে ব্যাকএন্ড স্বয়ংক্রিয়ভাবে মডেল ও কী সুইচ করবে।
           </p>
         </div>
 
@@ -214,7 +305,7 @@ export const AdminApiKeysTab: React.FC<AdminApiKeysTabProps> = ({
         </div>
       </div>
 
-      {/* Save Notification */}
+      {/* Notifications */}
       {saveSuccess && (
         <div className="p-4 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs flex items-center gap-2">
           <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
@@ -228,6 +319,103 @@ export const AdminApiKeysTab: React.FC<AdminApiKeysTabProps> = ({
           <span>{saveError}</span>
         </div>
       )}
+
+      {/* Manual API & Model Switching Control Card */}
+      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 text-white shadow-md space-y-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2 text-sm font-bold text-indigo-300">
+            <Sliders className="w-4 h-4 text-indigo-400" />
+            ম্যানুয়াল ও অটোমেটিক এপিআই / মডেল সুইচার সেটিংস
+          </div>
+          <button
+            type="button"
+            onClick={handleSaveAiConfig}
+            disabled={isSavingAiConfig}
+            className="px-3.5 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer disabled:opacity-50"
+          >
+            <Save className="w-3.5 h-3.5" />
+            {isSavingAiConfig ? 'সেভ হচ্ছে...' : 'AI সেটিংস সেভ করুন'}
+          </button>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2">
+          {/* Preferred Model Selector */}
+          <div>
+            <label className="block text-xs font-semibold text-slate-300 mb-1.5">
+              ডিফল্ট/পছন্দের মডেল
+            </label>
+            <select
+              value={selectedModel}
+              onChange={(e) => setSelectedModel(e.target.value)}
+              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"
+            >
+              <option value="openrouter/free">OpenRouter Auto Free (openrouter/free)</option>
+              <option value="google/gemini-2.0-flash-exp:free">Google Gemini 2.0 Flash (Free)</option>
+              <option value="meta-llama/llama-3.3-70b-instruct:free">Meta Llama 3.3 70B (Free)</option>
+              <option value="deepseek/deepseek-r1:free">DeepSeek R1 (Free)</option>
+              <option value="qwen/qwen-2.5-72b-instruct:free">Qwen 2.5 72B (Free)</option>
+              <option value="custom">কাস্টম মডেল নাম দিন (Custom)</option>
+            </select>
+            {selectedModel === 'custom' && (
+              <input
+                type="text"
+                value={customModelInput}
+                onChange={(e) => setCustomModelInput(e.target.value)}
+                placeholder="যেমন: anthropic/claude-3.5-sonnet"
+                className="w-full mt-2 bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
+              />
+            )}
+          </div>
+
+          {/* Active Primary Key Info & Quick Switcher */}
+          <div>
+            <label className="block text-xs font-semibold text-slate-300 mb-1.5">
+              বর্তমান প্রাইমারি এপিআই কী
+            </label>
+            <div className="bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs flex items-center justify-between">
+              <span className="font-semibold text-emerald-400 flex items-center gap-1.5 truncate">
+                <Star className="w-3.5 h-3.5 fill-amber-400 text-amber-400 shrink-0" />
+                {keyList.find((k) => k.is_primary)?.label || 'ডিফল্ট (১ম কী)'}
+              </span>
+              <span className="text-[10px] text-slate-500 font-mono">
+                {keyList.find((k) => k.is_primary)?.key_masked || 'Active'}
+              </span>
+            </div>
+            <p className="text-[11px] text-slate-400 mt-1">
+              নিচের তালিকা থেকে যেকোনো কী-কে সরাসরি “প্রাইমারি” নির্বাচন করতে পারবেন।
+            </p>
+          </div>
+
+          {/* Automatic Failover & Model Switch Toggle */}
+          <div>
+            <label className="block text-xs font-semibold text-slate-300 mb-1.5">
+              অটোমেটিক ফেইলওভার ও ফলব্যাক
+            </label>
+            <button
+              type="button"
+              onClick={() => setAutoFailover(!autoFailover)}
+              className={`w-full px-3 py-2 rounded-xl border text-xs font-semibold flex items-center justify-between cursor-pointer transition ${
+                autoFailover
+                  ? 'bg-emerald-950/40 border-emerald-800/80 text-emerald-300'
+                  : 'bg-rose-950/30 border-rose-800/80 text-rose-300'
+              }`}
+            >
+              <span className="flex items-center gap-2">
+                <Sparkles className="w-4 h-4" />
+                {autoFailover ? 'অটো-সুইচিং চালু (Active)' : 'অটো-সুইচিং বন্ধ (Disabled)'}
+              </span>
+              {autoFailover ? (
+                <ToggleRight className="w-5 h-5 text-emerald-400" />
+              ) : (
+                <ToggleLeft className="w-5 h-5 text-rose-400" />
+              )}
+            </button>
+            <p className="text-[11px] text-slate-400 mt-1">
+              চালি রাখলে রেট লিমিট বা ত্রুটি দেখা দিলে স্বয়ংক্রিয়ভাবে পরবর্তী ব্যাকআপ কী ব্যবহার হবে।
+            </p>
+          </div>
+        </div>
+      </div>
 
       {/* Add New Key Form Card */}
       {isAdding && (
@@ -293,7 +481,9 @@ export const AdminApiKeysTab: React.FC<AdminApiKeysTabProps> = ({
           <div className="text-xs font-bold text-slate-800 uppercase tracking-wider">
             কনফিগার করা এপিআই কী তালিকা ({keyList.length})
           </div>
-          <span className="text-xs text-slate-500">অগ্রাধিকার ক্রম: ১ থেকে শুরু করে ক্রমান্বয়ে ফলব্যাক</span>
+          <span className="text-xs text-slate-500">
+            অগ্রাধিকার: প্রাইমারি কী সর্বাগ্রে ব্যবহৃত হয়, ফেইলওভারে বাকি কী ব্যবহার হয়
+          </span>
         </div>
 
         {keyList.length === 0 ? (
@@ -308,19 +498,38 @@ export const AdminApiKeysTab: React.FC<AdminApiKeysTabProps> = ({
           <div className="divide-y divide-slate-100">
             {keyList.map((keyItem, index) => {
               const isTesting = testingKeyId === keyItem.id;
+              const isSettingPrimary = settingPrimaryKeyId === keyItem.id;
+              const isPrimary = keyItem.is_primary || (index === 0 && !keyList.some((k) => k.is_primary));
+
               return (
                 <div
                   key={keyItem.id}
-                  className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4 hover:bg-slate-50/80 transition-colors"
+                  className={`p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4 transition-colors ${
+                    isPrimary ? 'bg-amber-50/40 hover:bg-amber-50/70' : 'hover:bg-slate-50/80'
+                  }`}
                 >
                   <div className="flex items-center gap-3">
-                    <div className="w-8 h-8 rounded-lg bg-slate-100 text-slate-700 font-bold text-xs flex items-center justify-center shrink-0">
-                      #{index + 1}
+                    <div
+                      className={`w-8 h-8 rounded-lg font-bold text-xs flex items-center justify-center shrink-0 ${
+                        isPrimary
+                          ? 'bg-amber-500 text-white shadow-sm'
+                          : 'bg-slate-100 text-slate-700'
+                      }`}
+                    >
+                      {isPrimary ? <Star className="w-4 h-4 fill-white text-white" /> : `#${index + 1}`}
                     </div>
 
                     <div>
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
                         <span className="text-sm font-bold text-slate-900">{keyItem.label}</span>
+
+                        {isPrimary && (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-100 text-amber-900 text-[11px] font-bold border border-amber-300">
+                            <Star className="w-3 h-3 fill-amber-500 text-amber-500" />
+                            প্রধান (Primary)
+                          </span>
+                        )}
+
                         {/* Status Badge */}
                         <span
                           className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-semibold ${
@@ -404,6 +613,18 @@ export const AdminApiKeysTab: React.FC<AdminApiKeysTabProps> = ({
                   </div>
 
                   <div className="flex items-center gap-2 self-end sm:self-center">
+                    {!isPrimary && (
+                      <button
+                        type="button"
+                        onClick={() => handleSetPrimaryKey(keyItem.id)}
+                        disabled={isSettingPrimary}
+                        className="px-2.5 py-1.5 rounded-lg border border-amber-300 bg-amber-50 text-amber-900 text-xs font-semibold hover:bg-amber-100 flex items-center gap-1 transition-colors cursor-pointer disabled:opacity-50"
+                      >
+                        <Star className="w-3.5 h-3.5 text-amber-600" />
+                        {isSettingPrimary ? 'সেট হচ্ছে...' : 'প্রাইমারি হিসেবে বেছে নিন'}
+                      </button>
+                    )}
+
                     <button
                       type="button"
                       onClick={() => handleTestSingleKey(keyItem)}
@@ -431,7 +652,7 @@ export const AdminApiKeysTab: React.FC<AdminApiKeysTabProps> = ({
         {/* Footer with Save to Database Button */}
         <div className="p-4 bg-slate-50 border-t border-slate-200 flex items-center justify-between">
           <span className="text-xs text-slate-500">
-            পরিবর্তনগুলো স্থায়ীভাবে সংরক্ষণ করতে নিচের বাটনে চাপুন
+            কী পরিবর্তনগুলো স্থায়ীভাবে সংরক্ষণ করতে “সেটিংস সংরক্ষণ করুন” বাটনে চাপুন
           </span>
 
           <button
@@ -450,12 +671,13 @@ export const AdminApiKeysTab: React.FC<AdminApiKeysTabProps> = ({
       <div className="bg-slate-900 rounded-2xl p-6 text-white border border-slate-800">
         <h3 className="text-sm font-bold text-white flex items-center gap-2">
           <ShieldCheck className="w-4 h-4 text-emerald-400" />
-          স্মার্ট ফেইলওভার ও ফ্রি টিয়ার অপটিমাইজেশন
+          ম্যানুয়াল ও অটোমেটিক ওপেনরাউটার ফেইলওভার গাইড
         </h3>
         <p className="text-xs text-slate-300 mt-2 leading-relaxed">
-          ওপেনরাউটারের ফ্রি মডেলগুলো (যেমন <code className="text-indigo-300">openrouter/free</code>, <code className="text-indigo-300">nvidia/llama-3.1-nemotron-70b-instruct:free</code>) অনেক সময় অতিরিক্ত ট্রাফিকের কারণে রেট লিমিট দেয়। একাধিক কি যুক্ত থাকলে PrepTest সিস্টেম নিজে নিজেই পরবর্তী কি-তে প্রশ্ন জেনারেট করে নেয়, যাতে শিক্ষার্থীদের পড়ালেখায় কোনো ব্যাঘাত না ঘটে।
+          আপনার প্যানেল থেকে যেকোনো কী-কে “প্রাইমারি” নির্বাচন করে রাখতে পারবেন। ব্যাকএন্ডে সিস্টেম সবসময় আপনার নির্বাচিত প্রাইমারি কী দিয়ে প্রথম চেতসা করবে। যদি কোনো সময় সেই কী রেট লিমিট বা ত্রুটির সম্মুখীন হয় এবং অটোমেটিক ফেইলওভার অন থাকে, তবে সিস্টেম তাৎক্ষণিকভাবে দ্বিতীয় কী এবং ব্যাকআপ মডেলে সুইচ করবে।
         </p>
       </div>
     </div>
   );
 };
+
