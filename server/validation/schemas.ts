@@ -145,6 +145,84 @@ export const bulkQuestionsImportSchema = z.union([
   }),
 ]);
 
+// ---------------- WRITTEN QUESTION SCHEMAS ----------------
+export const writtenQuestionCreateUpdateSchema = z.object({
+  id: z.string().optional(),
+  subject_id: z.string().min(1, 'Subject ID is required (e.g. physics_1, physics_2)'),
+  subject_name: z.string().min(1, 'Subject name is required'),
+  paper: z.enum(['1st', '2nd', 'all']).optional().default('1st'),
+  chapter_id: z.string().min(1, 'Chapter ID is required (e.g. phy1_ch2)'),
+  chapter_name: z.string().min(1, 'Chapter name is required'),
+  topic_id: z.string().optional(),
+  topic_name: z.string().optional(),
+  question_number: z.number().int().positive().optional(),
+  question_text: z.string().min(1, 'Question text is required (supports LaTeX $...$ / $$...$$)'),
+  question_image_url: z.string().url().nullable().optional().or(z.literal('')),
+  explanation: z.string().min(1, 'Explanation and step-by-step solution is required'),
+  explanation_latex: z.string().nullable().optional(),
+  explanation_image_urls: z.array(z.string()).optional().default([]),
+  tags: z.array(z.string()).optional().default([]),
+  category: z.enum(['academic', 'main_book', 'engineering', 'medical', 'varsity_a']).optional().default('engineering'),
+  difficulty: z.enum(['easy', 'medium', 'hard']).optional().default('medium'),
+  star_rating: z.union([z.literal(1), z.literal(2), z.literal(3)]).optional().default(1),
+  is_active: z.boolean().optional().default(true),
+});
+
+export const bulkWrittenQuestionItemSchema = z.object({
+  id: z.string().optional(),
+  subject_id: z.string().min(1, 'Subject ID is required (e.g. physics_1, math_2)'),
+  subject_name: z.string().min(1, 'Subject name is required'),
+  paper: z.union([z.literal('1st'), z.literal('2nd'), z.literal('all'), z.number().transform((n) => (n === 2 ? '2nd' : '1st'))]).default('1st'),
+  chapter_id: z.string().min(1, 'Chapter ID is required (e.g. phy2_ch1)'),
+  chapter_name: z.string().min(1, 'Chapter name is required'),
+  topic_id: z.string().optional(),
+  topic_name: z.string().optional(),
+  question_number: z.union([z.number(), z.string().transform((s) => parseInt(s, 10))]).optional(),
+  question_text: z.string().min(1, 'Question text is required'),
+  question_image_url: z.string().nullable().optional(),
+  explanation: z.string().min(1, 'Detailed solution is required'),
+  explanation_latex: z.string().nullable().optional(),
+  explanation_image_urls: z.union([
+    z.array(z.string()),
+    z.string().transform((str) => {
+      try {
+        const parsed = JSON.parse(str);
+        return Array.isArray(parsed) ? parsed : [str];
+      } catch {
+        return str.split(',').map((s) => s.trim()).filter(Boolean);
+      }
+    }),
+  ]).optional(),
+  tags: z.union([
+    z.array(z.string()),
+    z.string().transform((str) => {
+      try {
+        const parsed = JSON.parse(str);
+        return Array.isArray(parsed) ? parsed : [str];
+      } catch {
+        return str.split(',').map((s) => s.trim()).filter(Boolean);
+      }
+    }),
+  ]).optional().default([]),
+  category: z.string().optional(),
+  difficulty: z.enum(['easy', 'medium', 'hard']).optional().default('medium'),
+  star_rating: z.union([z.number(), z.string().transform((s) => parseInt(s, 10))]).optional().default(1),
+  is_active: z.boolean().optional().default(true),
+});
+
+export const bulkWrittenQuestionsImportSchema = z.union([
+  z.array(bulkWrittenQuestionItemSchema).min(1, 'JSON array must contain at least 1 written question'),
+  z.object({
+    written_questions: z.array(bulkWrittenQuestionItemSchema).min(1, 'Array must contain at least 1 written question'),
+  }),
+  z.object({
+    questions: z.array(bulkWrittenQuestionItemSchema).min(1, 'Array must contain at least 1 written question'),
+  }),
+  z.object({
+    data: z.array(bulkWrittenQuestionItemSchema).min(1, 'Array must contain at least 1 written question'),
+  }),
+]);
+
 export const draftCreateSchema = z.object({
   source: z.string().optional().default('manual'),
   chapterId: z.string().optional(),

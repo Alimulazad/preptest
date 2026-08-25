@@ -894,9 +894,28 @@ export function formatRowToQuestion(row: any): Question {
 export interface PaginatedQuestionsResult {
   questions: Question[];
   total: number;
-  page: number;
-  limit: number;
-  totalPages: number;
+  nextCursor?: string | null;
+  hasMore?: boolean;
+  page?: number;
+  limit?: number;
+  totalPages?: number;
+}
+
+export function decodeCursor(cursorStr?: string): { created_at?: number; id?: string } | null {
+  if (!cursorStr) return null;
+  try {
+    const raw = Buffer.from(cursorStr, 'base64').toString('utf-8');
+    const parsed = JSON.parse(raw);
+    if (parsed && (parsed.id || parsed.created_at)) return parsed;
+  } catch {
+    return { id: cursorStr };
+  }
+  return null;
+}
+
+export function encodeCursor(created_at?: number, id?: string): string | null {
+  if (!id) return null;
+  return Buffer.from(JSON.stringify({ created_at: created_at || Date.now(), id })).toString('base64');
 }
 
 export async function getAllQuestions(filters?: {
@@ -907,13 +926,14 @@ export async function getAllQuestions(filters?: {
   tag?: string;
   search?: string;
   category?: string;
+  cursor?: string;
   page?: number;
   limit?: number;
 }): Promise<PaginatedQuestionsResult> {
   const page = Math.max(1, filters?.page || 1);
-  const isPaginated = filters?.page !== undefined || filters?.limit !== undefined;
   const limit = filters?.limit ? Math.max(1, filters.limit) : 0;
-  const offset = limit > 0 ? (page - 1) * limit : 0;
+  const cursorData = decodeCursor(filters?.cursor);
+  const isCursorMode = Boolean(filters?.cursor !== undefined && !filters?.page);
 
   try {
     let whereClause = ' WHERE 1=1';
@@ -950,27 +970,57 @@ export async function getAllQuestions(filters?: {
       params.push(term, term, term, term, term);
     }
 
-    // 1. Get total count
+    // 1. Total count query
     const countSql = `SELECT COUNT(*) as total FROM questions${whereClause}`;
     const countRes = await query(countSql, params);
     const total = countRes && countRes.rows && countRes.rows[0] ? Number(countRes.rows[0].total) || 0 : 0;
 
-    // 2. Get questions with pagination
-    let dataSql = `SELECT * FROM questions${whereClause} ORDER BY created_at DESC`;
+    // 2. Data query with Cursor OR Offset
+    let dataSql = `SELECT * FROM questions`;
     const dataParams = [...params];
-    if (limit > 0) {
-      dataSql += ` LIMIT $${pIdx++} OFFSET $${pIdx++}`;
-      dataParams.push(limit, offset);
+
+    if (cursorData && cursorData.created_at) {
+      whereClause += ` AND (created_at < $${pIdx++} OR (created_at = $${pIdx++} AND id < $${pIdx++}))`;
+      dataParams.push(cursorData.created_at, cursorData.created_at, cursorData.id || '');
+    } else if (cursorData && cursorData.id) {
+      whereClause += ` AND id < $${pIdx++}`;
+      dataParams.push(cursorData.id);
+    }
+
+    dataSql += `${whereClause} ORDER BY created_at DESC, id DESC`;
+
+    const fetchLimit = limit > 0 ? limit + 1 : 0;
+    if (fetchLimit > 0) {
+      if (!isCursorMode && !cursorData && page > 1) {
+        const offset = (page - 1) * limit;
+        dataSql += ` LIMIT $${pIdx++} OFFSET $${pIdx++}`;
+        dataParams.push(fetchLimit, offset);
+      } else {
+        dataSql += ` LIMIT $${pIdx++}`;
+        dataParams.push(fetchLimit);
+      }
     }
 
     const res = await query(dataSql, dataParams);
     if (res && res.rows) {
-      const questions = res.rows.map(formatRowToQuestion);
-      const effectiveLimit = limit > 0 ? limit : total || questions.length || 1;
+      let questions = res.rows.map(formatRowToQuestion);
+      let hasMore = false;
+      if (limit > 0 && questions.length > limit) {
+        hasMore = true;
+        questions = questions.slice(0, limit);
+      }
+
+      const lastQuestion = questions[questions.length - 1];
+      const nextCursor = hasMore && lastQuestion
+        ? encodeCursor(lastQuestion.star_rating ? (lastQuestion as any).created_at || Date.now() : Date.now(), lastQuestion.id)
+        : null;
+
       const totalPages = limit > 0 ? Math.ceil(total / limit) || 1 : 1;
       return {
         questions,
         total,
+        nextCursor,
+        hasMore,
         page,
         limit: limit > 0 ? limit : total,
         totalPages,
@@ -1012,15 +1062,36 @@ export async function getAllQuestions(filters?: {
   }
 
   const total = list.length;
-  let questions = list;
-  if (limit > 0) {
-    questions = list.slice(offset, offset + limit);
+  let startIndex = 0;
+
+  if (cursorData && cursorData.id) {
+    const idx = list.findIndex((q) => q.id === cursorData.id);
+    if (idx !== -1) {
+      startIndex = idx + 1;
+    }
+  } else if (!isCursorMode && page > 1 && limit > 0) {
+    startIndex = (page - 1) * limit;
   }
+
+  let questions = limit > 0 ? list.slice(startIndex, startIndex + limit + 1) : list;
+  let hasMore = false;
+  if (limit > 0 && questions.length > limit) {
+    hasMore = true;
+    questions = questions.slice(0, limit);
+  }
+
+  const lastQuestion = questions[questions.length - 1];
+  const nextCursor = hasMore && lastQuestion
+    ? encodeCursor((lastQuestion as any).created_at || Date.now(), lastQuestion.id)
+    : null;
+
   const totalPages = limit > 0 ? Math.ceil(total / limit) || 1 : 1;
 
   return {
     questions,
     total,
+    nextCursor,
+    hasMore,
     page,
     limit: limit > 0 ? limit : total,
     totalPages,
@@ -2364,9 +2435,11 @@ export function formatRowToWrittenQuestion(row: any): WrittenQuestion {
 export interface PaginatedWrittenQuestionsResult {
   questions: WrittenQuestion[];
   total: number;
-  page: number;
-  limit: number;
-  totalPages: number;
+  nextCursor?: string | null;
+  hasMore?: boolean;
+  page?: number;
+  limit?: number;
+  totalPages?: number;
 }
 
 export async function getAllWrittenQuestions(filters?: {
@@ -2378,12 +2451,14 @@ export async function getAllWrittenQuestions(filters?: {
   search?: string;
   category?: string;
   difficulty?: string;
+  cursor?: string;
   page?: number;
   limit?: number;
 }): Promise<PaginatedWrittenQuestionsResult> {
   const page = Math.max(1, filters?.page || 1);
   const limit = filters?.limit ? Math.max(1, filters.limit) : 0;
-  const offset = limit > 0 ? (page - 1) * limit : 0;
+  const cursorData = decodeCursor(filters?.cursor);
+  const isCursorMode = Boolean(filters?.cursor !== undefined && !filters?.page);
 
   try {
     let whereClause = ' WHERE is_active = TRUE';
@@ -2429,21 +2504,52 @@ export async function getAllWrittenQuestions(filters?: {
     const countRes = await query(countSql, params);
     const total = countRes && countRes.rows && countRes.rows[0] ? Number(countRes.rows[0].total) || 0 : 0;
 
-    // 2. Get questions with pagination
-    let dataSql = `SELECT * FROM written_questions${whereClause} ORDER BY question_number ASC NULLS LAST, created_at DESC`;
+    // 2. Get questions with cursor or offset
+    let dataSql = `SELECT * FROM written_questions`;
     const dataParams = [...params];
-    if (limit > 0) {
-      dataSql += ` LIMIT $${pIdx++} OFFSET $${pIdx++}`;
-      dataParams.push(limit, offset);
+
+    if (cursorData && cursorData.created_at) {
+      whereClause += ` AND (created_at < $${pIdx++} OR (created_at = $${pIdx++} AND id < $${pIdx++}))`;
+      dataParams.push(cursorData.created_at, cursorData.created_at, cursorData.id || '');
+    } else if (cursorData && cursorData.id) {
+      whereClause += ` AND id < $${pIdx++}`;
+      dataParams.push(cursorData.id);
+    }
+
+    dataSql += `${whereClause} ORDER BY question_number ASC NULLS LAST, created_at DESC, id DESC`;
+
+    const fetchLimit = limit > 0 ? limit + 1 : 0;
+    if (fetchLimit > 0) {
+      if (!isCursorMode && !cursorData && page > 1) {
+        const offset = (page - 1) * limit;
+        dataSql += ` LIMIT $${pIdx++} OFFSET $${pIdx++}`;
+        dataParams.push(fetchLimit, offset);
+      } else {
+        dataSql += ` LIMIT $${pIdx++}`;
+        dataParams.push(fetchLimit);
+      }
     }
 
     const res = await query(dataSql, dataParams);
     if (res && res.rows) {
-      const questions = res.rows.map(formatRowToWrittenQuestion);
+      let questions = res.rows.map(formatRowToWrittenQuestion);
+      let hasMore = false;
+      if (limit > 0 && questions.length > limit) {
+        hasMore = true;
+        questions = questions.slice(0, limit);
+      }
+
+      const lastQuestion = questions[questions.length - 1];
+      const nextCursor = hasMore && lastQuestion
+        ? encodeCursor(lastQuestion.created_at || Date.now(), lastQuestion.id)
+        : null;
+
       const totalPages = limit > 0 ? Math.ceil(total / limit) || 1 : 1;
       return {
         questions,
         total,
+        nextCursor,
+        hasMore,
         page,
         limit: limit > 0 ? limit : total,
         totalPages,
@@ -2485,21 +2591,41 @@ export async function getAllWrittenQuestions(filters?: {
         q.question_text.toLowerCase().includes(s) ||
         q.explanation.toLowerCase().includes(s) ||
         (q.chapter_name && q.chapter_name.toLowerCase().includes(s)) ||
-        (q.topic_name && q.topic_name.toLowerCase().includes(s)) ||
-        (q.tags && q.tags.some((t) => t.toLowerCase().includes(s)))
+        (q.topic_name && q.topic_name.toLowerCase().includes(s))
     );
   }
 
-  // Sort by question_number if available
-  list.sort((a, b) => (a.question_number || 9999) - (b.question_number || 9999));
-
   const total = list.length;
-  const sliced = limit > 0 ? list.slice(offset, offset + limit) : list;
+  let startIndex = 0;
+
+  if (cursorData && cursorData.id) {
+    const idx = list.findIndex((q) => q.id === cursorData.id);
+    if (idx !== -1) {
+      startIndex = idx + 1;
+    }
+  } else if (!isCursorMode && page > 1 && limit > 0) {
+    startIndex = (page - 1) * limit;
+  }
+
+  let questions = limit > 0 ? list.slice(startIndex, startIndex + limit + 1) : list;
+  let hasMore = false;
+  if (limit > 0 && questions.length > limit) {
+    hasMore = true;
+    questions = questions.slice(0, limit);
+  }
+
+  const lastQuestion = questions[questions.length - 1];
+  const nextCursor = hasMore && lastQuestion
+    ? encodeCursor(lastQuestion.created_at || Date.now(), lastQuestion.id)
+    : null;
+
   const totalPages = limit > 0 ? Math.ceil(total / limit) || 1 : 1;
 
   return {
-    questions: sliced,
+    questions,
     total,
+    nextCursor,
+    hasMore,
     page,
     limit: limit > 0 ? limit : total,
     totalPages,

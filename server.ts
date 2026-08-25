@@ -1438,10 +1438,10 @@ Additional Notes from Admin: ${promptNotes || 'None'}`;
 });
 
 
-// GET /api/questions with optional filtering and pagination
+// GET /api/questions with optional filtering, cursor and page pagination
 app.get('/api/questions', async (req: Request, res: Response) => {
   try {
-    const { subject_id, chapter_id, topic_id, paper, tag, search, category, page, limit } = req.query;
+    const { subject_id, chapter_id, topic_id, paper, tag, search, category, cursor, page, limit } = req.query;
 
     const pageNum = page !== undefined ? Math.max(1, parseInt(page as string, 10) || 1) : undefined;
     const limitNum = limit !== undefined ? Math.max(1, parseInt(limit as string, 10) || 20) : undefined;
@@ -1454,6 +1454,7 @@ app.get('/api/questions', async (req: Request, res: Response) => {
       tag: typeof tag === 'string' ? tag : undefined,
       search: typeof search === 'string' ? search : undefined,
       category: typeof category === 'string' ? category : undefined,
+      cursor: typeof cursor === 'string' ? cursor : undefined,
       page: pageNum,
       limit: limitNum,
     });
@@ -1462,11 +1463,17 @@ app.get('/api/questions', async (req: Request, res: Response) => {
     res.setHeader('X-Page', String(result.page));
     res.setHeader('X-Limit', String(result.limit));
     res.setHeader('X-Total-Pages', String(result.totalPages));
+    if (result.nextCursor) {
+      res.setHeader('X-Next-Cursor', result.nextCursor);
+    }
+    res.setHeader('X-Has-More', String(Boolean(result.hasMore)));
 
-    if (pageNum !== undefined || limitNum !== undefined) {
+    if (pageNum !== undefined || limitNum !== undefined || cursor !== undefined) {
       return res.json({
         questions: result.questions,
         total: result.total,
+        nextCursor: result.nextCursor ?? null,
+        hasMore: Boolean(result.hasMore),
         page: result.page,
         limit: result.limit,
         totalPages: result.totalPages,
@@ -1475,7 +1482,7 @@ app.get('/api/questions', async (req: Request, res: Response) => {
 
     return res.json(result.questions);
   } catch (error: any) {
-    console.error('Error fetching questions from SQLite:', error);
+    console.error('Error fetching questions from database:', error);
     return res.status(500).json({ error: 'Failed to fetch questions', details: error.message });
   }
 });
@@ -1607,10 +1614,10 @@ app.delete('/api/questions/:id', authenticateAdmin, async (req: Request, res: Re
 
 // ---------------- WRITTEN QUESTIONS ENDPOINTS ----------------
 
-// GET /api/written-questions with optional filtering and pagination
+// GET /api/written-questions with optional filtering, cursor and page pagination
 app.get('/api/written-questions', async (req: Request, res: Response) => {
   try {
-    const { subject_id, chapter_id, topic_id, paper, tag, search, category, difficulty, page, limit } = req.query;
+    const { subject_id, chapter_id, topic_id, paper, tag, search, category, difficulty, cursor, page, limit } = req.query;
 
     const pageNum = page !== undefined ? Math.max(1, parseInt(page as string, 10) || 1) : undefined;
     const limitNum = limit !== undefined ? Math.max(1, parseInt(limit as string, 10) || 20) : undefined;
@@ -1624,6 +1631,7 @@ app.get('/api/written-questions', async (req: Request, res: Response) => {
       search: typeof search === 'string' ? search : undefined,
       category: typeof category === 'string' ? category : undefined,
       difficulty: typeof difficulty === 'string' ? difficulty : undefined,
+      cursor: typeof cursor === 'string' ? cursor : undefined,
       page: pageNum,
       limit: limitNum,
     });
@@ -1632,11 +1640,17 @@ app.get('/api/written-questions', async (req: Request, res: Response) => {
     res.setHeader('X-Page', String(result.page));
     res.setHeader('X-Limit', String(result.limit));
     res.setHeader('X-Total-Pages', String(result.totalPages));
+    if (result.nextCursor) {
+      res.setHeader('X-Next-Cursor', result.nextCursor);
+    }
+    res.setHeader('X-Has-More', String(Boolean(result.hasMore)));
 
-    if (pageNum !== undefined || limitNum !== undefined) {
+    if (pageNum !== undefined || limitNum !== undefined || cursor !== undefined) {
       return res.json({
         questions: result.questions,
         total: result.total,
+        nextCursor: result.nextCursor ?? null,
+        hasMore: Boolean(result.hasMore),
         page: result.page,
         limit: result.limit,
         totalPages: result.totalPages,

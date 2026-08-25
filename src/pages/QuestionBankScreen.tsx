@@ -35,6 +35,7 @@ import QuestionCard from '../components/QuestionCard';
 import WrittenQuestionCard from '../components/WrittenQuestionCard';
 import EmptyState from '../components/common/EmptyState';
 import { QuestionListSkeleton } from '../components/common/SkeletonLoader';
+import VirtualizedQuestionList from '../components/common/VirtualizedQuestionList';
 
 interface QuestionBankScreenProps {
   questions: Question[];
@@ -167,8 +168,6 @@ export const QuestionBankScreen: React.FC<QuestionBankScreenProps> = ({
   const [isFilterChanging, setIsFilterChanging] = useState<boolean>(false);
   const [questionTypeFilter, setQuestionTypeFilter] = useState<'all' | 'mcq' | 'written'>('mcq');
   const [showAllAnswers, setShowAllAnswers] = useState<boolean>(false);
-  const [page, setPage] = useState<number>(1);
-  const pageSize = 15;
 
   const [fetchedWrittenQuestions, setFetchedWrittenQuestions] = useState<WrittenQuestion[]>(INITIAL_WRITTEN_QUESTIONS);
 
@@ -188,11 +187,6 @@ export const QuestionBankScreen: React.FC<QuestionBankScreenProps> = ({
       ? propWrittenQuestions
       : fetchedWrittenQuestions;
   }, [propWrittenQuestions, fetchedWrittenQuestions]);
-
-  // Reset page whenever filter changes
-  useEffect(() => {
-    setPage(1);
-  }, [selectedSubject, selectedCategory, selectedChapter, selectedTopicId, questionTypeFilter, searchQuery]);
 
   // Filtered Subjects for Level 1
   const filteredSubjects = useMemo(() => {
@@ -428,18 +422,6 @@ export const QuestionBankScreen: React.FC<QuestionBankScreenProps> = ({
     const isWrittenMode = questionTypeFilter === 'written';
     const activeList = isWrittenMode ? currentWrittenQuestions : currentQuestions;
 
-    const totalPages = Math.ceil(activeList.length / pageSize) || 1;
-    const safePage = Math.min(Math.max(1, page), totalPages);
-    const startIndex = (safePage - 1) * pageSize;
-    const endIndex = Math.min(startIndex + pageSize, activeList.length);
-    const paginatedItems = activeList.slice(startIndex, endIndex);
-
-    const handlePageChange = (newPage: number) => {
-      if (newPage < 1 || newPage > totalPages) return;
-      setPage(newPage);
-      window.scrollTo({ top: 0, behavior: 'smooth' });
-    };
-
     return (
       <div className="space-y-4 pb-36 max-w-2xl mx-auto px-1 sm:px-2">
         {/* Top Header (Matching Screenshots 1-4) */}
@@ -494,109 +476,25 @@ export const QuestionBankScreen: React.FC<QuestionBankScreenProps> = ({
           </div>
         </div>
 
-        {/* Range Indicator */}
-        {activeList.length > 0 && totalPages > 1 && (
-          <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400 font-medium px-1">
-            <span>
-              দেখানো হচ্ছে: <strong className="text-slate-800 dark:text-slate-200 font-mono">{toBengaliNumber(startIndex + 1)} - {toBengaliNumber(endIndex)}</strong>
-            </span>
-            <span>
-              পৃষ্ঠা: <strong className="text-slate-800 dark:text-slate-200 font-mono">{toBengaliNumber(safePage)} / {toBengaliNumber(totalPages)}</strong>
-            </span>
-          </div>
-        )}
-
-        {/* Questions List with Quick Shimmer Animation during Filter Transitions */}
+        {/* Questions List with Virtualization for High-Performance Scrolling */}
         {isLoading || isFilterChanging ? (
           <div className="space-y-3 pt-1" id="question-bank-skeleton-loading">
             <QuestionListSkeleton count={4} />
           </div>
-        ) : paginatedItems.length > 0 ? (
-          <div className="space-y-3 pt-1">
-            {isWrittenMode ? (
-              (paginatedItems as WrittenQuestion[]).map((wq, idx) => (
-                <WrittenQuestionCard
-                  key={wq.id}
-                  question={wq}
-                  index={startIndex + idx}
-                  forceShowAnswer={showAllAnswers}
-                  isBookmarked={bookmarks.includes(wq.id)}
-                  onToggleBookmark={() => onToggleBookmark(wq.id)}
-                  onAskAI={onAskAI as any}
-                />
-              ))
-            ) : (
-              (paginatedItems as Question[]).map((q, idx) => (
-                <QuestionCard
-                  key={q.id}
-                  question={q}
-                  index={startIndex + idx}
-                  mode="practice"
-                  forceShowAnswer={showAllAnswers}
-                  isBookmarked={bookmarks.includes(q.id)}
-                  onToggleBookmark={() => onToggleBookmark(q.id)}
-                  onAskAI={onAskAI}
-                />
-              ))
-            )}
-
-            {/* Pagination Controls */}
-            {totalPages > 1 && (
-              <div className="pt-3 pb-4 flex flex-col sm:flex-row items-center justify-between gap-3 bg-white dark:bg-slate-800 p-3 rounded-2xl border border-slate-200/80 dark:border-slate-700 shadow-2xs">
-                <div className="flex items-center gap-1.5">
-                  <button
-                    type="button"
-                    onClick={() => handlePageChange(safePage - 1)}
-                    disabled={safePage <= 1}
-                    className="flex items-center gap-1 px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
-                  >
-                    <ChevronLeft className="w-4 h-4" />
-                    <span>পূর্ববর্তী</span>
-                  </button>
-
-                  {/* Page numbers */}
-                  <div className="flex items-center gap-1">
-                    {Array.from({ length: totalPages }, (_, i) => i + 1)
-                      .filter((pNum) => pNum === 1 || pNum === totalPages || Math.abs(pNum - safePage) <= 1)
-                      .map((pNum, idx, arr) => {
-                        const showEllipsisBefore = idx > 0 && pNum - arr[idx - 1] > 1;
-                        return (
-                          <React.Fragment key={pNum}>
-                            {showEllipsisBefore && (
-                              <span className="px-1 text-slate-400 text-xs">...</span>
-                            )}
-                            <button
-                              type="button"
-                              onClick={() => handlePageChange(pNum)}
-                              className={`w-8 h-8 rounded-xl text-xs font-bold font-mono transition-colors cursor-pointer flex items-center justify-center ${
-                                safePage === pNum
-                                  ? 'bg-[#1E3A8A] dark:bg-blue-600 text-white shadow-2xs'
-                                  : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 border border-slate-200/60 dark:border-slate-700'
-                              }`}
-                            >
-                              {toBengaliNumber(pNum)}
-                            </button>
-                          </React.Fragment>
-                        );
-                      })}
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={() => handlePageChange(safePage + 1)}
-                    disabled={safePage >= totalPages}
-                    className="flex items-center gap-1 px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
-                  >
-                    <span>পরবর্তী</span>
-                    <ChevronRight className="w-4 h-4" />
-                  </button>
-                </div>
-
-                <div className="text-xs text-slate-500 dark:text-slate-400 font-medium">
-                  মোট <span className="font-bold text-slate-800 dark:text-slate-200 font-mono">{toBengaliNumber(currentQuestions.length)}</span> টি প্রশ্ন
-                </div>
-              </div>
-            )}
+        ) : activeList.length > 0 ? (
+          <div className="pt-1">
+            <VirtualizedQuestionList
+              items={activeList}
+              type={isWrittenMode ? 'written' : 'mcq'}
+              bookmarkedIds={bookmarks}
+              onToggleBookmark={onToggleBookmark}
+              onAskAI={onAskAI}
+              forceShowAnswer={showAllAnswers}
+              mode="practice"
+              fetchNextPage={() => {}}
+              hasNextPage={false}
+              isLoading={isLoading}
+            />
           </div>
         ) : (
           <EmptyState

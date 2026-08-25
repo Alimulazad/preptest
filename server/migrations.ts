@@ -189,6 +189,8 @@ export const migrations: Migration[] = [
 
         CREATE INDEX IF NOT EXISTS idx_written_questions_subject_chapter ON written_questions (subject_id, chapter_id);
         CREATE INDEX IF NOT EXISTS idx_written_questions_topic ON written_questions (topic_id);
+        CREATE INDEX IF NOT EXISTS idx_written_questions_is_active ON written_questions (is_active);
+        CREATE INDEX IF NOT EXISTS idx_written_questions_created ON written_questions (created_at DESC);
       `);
     },
   },

@@ -22,6 +22,61 @@ export interface WrittenQuestion {
   is_active?: boolean;
 }
 
+export interface WrittenQuestionFilters {
+  subject_id?: string;
+  chapter_id?: string;
+  topic_id?: string;
+  paper?: '1st' | '2nd' | 'all' | string;
+  category?: ExamCategory | string;
+  difficulty?: 'easy' | 'medium' | 'hard' | string;
+  tag?: string;
+  search?: string;
+  cursor?: string;
+  page?: number;
+  limit?: number;
+}
+
+export interface WrittenQuestionsPaginatedResponse {
+  questions: WrittenQuestion[];
+  total: number;
+  nextCursor?: string | null;
+  hasMore?: boolean;
+  page?: number;
+  limit?: number;
+  totalPages?: number;
+}
+
+export interface QuestionFilters {
+  subject_id?: string;
+  chapter_id?: string;
+  topic_id?: string;
+  paper?: '1st' | '2nd' | 'all' | string;
+  category?: ExamCategory | string;
+  difficulty?: 'easy' | 'medium' | 'hard' | string;
+  tag?: string;
+  search?: string;
+  type?: 'mcq' | 'written' | string;
+  cursor?: string;
+  page?: number;
+  limit?: number;
+}
+
+export interface QuestionsPaginatedResponse {
+  questions: Question[];
+  total: number;
+  nextCursor?: string | null;
+  hasMore?: boolean;
+  page?: number;
+  limit?: number;
+  totalPages?: number;
+}
+
+export type CreateWrittenQuestionInput = Omit<WrittenQuestion, 'id' | 'created_at' | 'updated_at'> & {
+  id?: string;
+};
+
+export type UpdateWrittenQuestionInput = Partial<CreateWrittenQuestionInput>;
+
 export type NavigationTab = 'home' | 'question_bank' | 'exam' | 'history' | 'progress';
 
 export type QuestionSubject = 
