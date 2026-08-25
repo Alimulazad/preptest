@@ -99,18 +99,19 @@ export const ExamScreen: React.FC<ExamScreenProps> = ({
   const [activeQuestions, setActiveQuestions] = useState<Question[]>([]);
   const [examResult, setExamResult] = useState<ExamSessionResult | null>(null);
 
-  // Notify App.tsx about flow state (to hide BottomNav during live quizzes)
+  // Notify App.tsx about flow state (to hide BottomNav during setup & live exam steps)
   useEffect(() => {
-    const isInsideLiveMode =
-      currentStep === 'live' ||
-      currentStep === 'battle' ||
-      currentStep === 'quick_practice' ||
-      currentStep === 'quick_result' ||
-      currentStep === 'result_mascot';
+    const isExamActiveOrSetup = currentStep !== 'dashboard';
 
     if (onFlowStateChange) {
-      onFlowStateChange(isInsideLiveMode);
+      onFlowStateChange(isExamActiveOrSetup);
     }
+
+    return () => {
+      if (onFlowStateChange) {
+        onFlowStateChange(false);
+      }
+    };
   }, [currentStep, onFlowStateChange]);
 
   // Handle Initial Subject/Chapter if passed from other tabs

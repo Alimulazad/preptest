@@ -667,16 +667,6 @@ export const AdminApiKeysTab: React.FC<AdminApiKeysTabProps> = ({
         </div>
       </div>
 
-      {/* Failover Guide Banner */}
-      <div className="bg-slate-900 rounded-2xl p-6 text-white border border-slate-800">
-        <h3 className="text-sm font-bold text-white flex items-center gap-2">
-          <ShieldCheck className="w-4 h-4 text-emerald-400" />
-          ম্যানুয়াল ও অটোমেটিক ওপেনরাউটার ফেইলওভার গাইড
-        </h3>
-        <p className="text-xs text-slate-300 mt-2 leading-relaxed">
-          আপনার প্যানেল থেকে যেকোনো কী-কে “প্রাইমারি” নির্বাচন করে রাখতে পারবেন। ব্যাকএন্ডে সিস্টেম সবসময় আপনার নির্বাচিত প্রাইমারি কী দিয়ে প্রথম চেতসা করবে। যদি কোনো সময় সেই কী রেট লিমিট বা ত্রুটির সম্মুখীন হয় এবং অটোমেটিক ফেইলওভার অন থাকে, তবে সিস্টেম তাৎক্ষণিকভাবে দ্বিতীয় কী এবং ব্যাকআপ মডেলে সুইচ করবে।
-        </p>
-      </div>
     </div>
   );
 };
