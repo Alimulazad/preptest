@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useRef } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import {
   Upload,
   FileSpreadsheet,
@@ -9,30 +9,47 @@ import {
   AlertCircle,
   X,
   Sparkles,
-  HelpCircle,
-  Trash2,
-  Eye,
   RefreshCw,
   Sliders,
   Database,
-  ArrowRight,
   Info,
-  Check
+  Check,
+  AlertTriangle,
+  PlusCircle,
+  HelpCircle,
+  Trash2,
+  Eye
 } from 'lucide-react';
-import { QuestionSubject } from '../../types';
+import { QuestionSubject, TopicRecord } from '../../types';
 import { SUBJECTS_DATA, CHAPTERS_DATA } from '../../data/admissionData';
+import { COMPREHENSIVE_CHAPTERS_DATA } from '../../data/subjectTopicsData';
 import MathText from '../MathText';
 import {
   ParsedQuestionItem,
   BulkDefaults,
   parseExcelOrCsvFile,
   parseRawBengaliQuestions,
+  smartMapTopicByName,
+  validateAndEnrichQuestion,
   downloadExcelTemplate,
   downloadCsvTemplate,
   downloadJsonTemplate,
+  downloadWrittenQuestionCsvTemplate,
+  downloadWrittenQuestionJsonTemplate,
+  downloadTopicCsvTemplate,
+  downloadTopicJsonTemplate,
+  downloadKnowledgeSnippetCsvTemplate,
+  downloadKnowledgeSnippetJsonTemplate
 } from '../../utils/bulkQuestionParser';
 import { validateStrictJsonFormat } from '../../utils/jsonValidator';
-import { bulkImportQuestionsApi } from '../../services/api';
+import {
+  bulkImportQuestionsApi,
+  bulkImportWrittenQuestionsApi,
+  bulkImportTopicsApi,
+  bulkImportKnowledgeSnippetsApi,
+  fetchTopics,
+  createTopic
+} from '../../services/api';
 
 interface AdminBulkImportModalProps {
   isOpen: boolean;
@@ -40,13 +57,20 @@ interface AdminBulkImportModalProps {
   onSuccess: (count: number) => void;
 }
 
+export type ImportContentType = 'mcq' | 'written' | 'topic' | 'knowledge_snippet';
+
 export const AdminBulkImportModal: React.FC<AdminBulkImportModalProps> = ({
   isOpen,
   onClose,
   onSuccess,
 }) => {
+  const [importType, setImportType] = useState<ImportContentType>('mcq');
   const [activeTab, setActiveTab] = useState<'file' | 'text' | 'templates'>('file');
-  
+
+  // DB Topics list for referential integrity checks
+  const [dbTopics, setDbTopics] = useState<Array<{ id: string; name?: string; bangla_name?: string; chapter_id?: string; subject_id?: string }>>([]);
+  const [isLoadingDbTopics, setIsLoadingDbTopics] = useState<boolean>(false);
+
   // Defaults configuration
   const [defaultSubject, setDefaultSubject] = useState<QuestionSubject>('physics_1');
   const [defaultChapter, setDefaultChapter] = useState<string>('phy1_ch1');
@@ -61,12 +85,59 @@ export const AdminBulkImportModal: React.FC<AdminBulkImportModalProps> = ({
   // Raw Text State
   const [rawBengaliTextInput, setRawBengaliTextInput] = useState<string>('');
 
-  // Parsed Questions Pre-flight State
+  // Parsed Items Pre-flight State
   const [parsedQuestions, setParsedQuestions] = useState<ParsedQuestionItem[]>([]);
   const [parseErrors, setParseErrors] = useState<string[]>([]);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
+  const [isCreatingMissingTopics, setIsCreatingMissingTopics] = useState<boolean>(false);
+  const [autoCreateSuccessMsg, setAutoCreateSuccessMsg] = useState<string | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
-  const [previewFilter, setPreviewFilter] = useState<'all' | 'valid' | 'invalid'>('all');
+  const [previewFilter, setPreviewFilter] = useState<'all' | 'valid' | 'warning' | 'invalid'>('all');
+
+  // Load existing topics from Database on mount/open
+  useEffect(() => {
+    if (isOpen) {
+      loadDbTopics();
+    }
+  }, [isOpen]);
+
+  const loadDbTopics = async () => {
+    setIsLoadingDbTopics(true);
+    try {
+      const res = await fetchTopics();
+      if (Array.isArray(res)) {
+        // Merge DB topics with static topics list for high coverage
+        const staticList: Array<TopicRecord> = [];
+        COMPREHENSIVE_CHAPTERS_DATA.forEach((ch) => {
+          if (ch.subtopics) {
+            ch.subtopics.forEach((st) => {
+              staticList.push({
+                id: st.id,
+                name: st.name || st.bangla_name || st.id,
+                bangla_name: st.bangla_name || st.name || st.id,
+                chapter_id: ch.id,
+                subject_id: ch.subject_id,
+                total_questions: st.total_questions || 0,
+                completed_questions: st.completed_questions || 0,
+              });
+            });
+          }
+        });
+        
+        const combined = [...res];
+        for (const st of staticList) {
+          if (!combined.some((c) => c.id === st.id)) {
+            combined.push(st);
+          }
+        }
+        setDbTopics(combined);
+      }
+    } catch (err) {
+      console.warn('Could not fetch DB topics for referential check:', err);
+    } finally {
+      setIsLoadingDbTopics(false);
+    }
+  };
 
   // Available chapters for selected default subject
   const availableChapters = useMemo(() => {
@@ -97,6 +168,120 @@ export const AdminBulkImportModal: React.FC<AdminBulkImportModalProps> = ({
     };
   };
 
+  // Helper to re-validate and enrich all parsed items with current dbTopics list
+  const revalidateParsedItems = (items: ParsedQuestionItem[], topicsList = dbTopics) => {
+    const defaults = getBulkDefaults();
+
+    return items.map((q, idx) => {
+      // Referential check & Smart Mapping for topic_id
+      const topicIdInput = q.topic_id?.trim();
+      const topicNameInput = q.topic_name?.trim() || q.name?.trim();
+
+      const mapRes = smartMapTopicByName(
+        topicIdInput,
+        topicNameInput,
+        q.chapter_id || defaults.chapter_id,
+        q.subject_id || defaults.subject_id,
+        topicsList
+      );
+
+      const finalTopicId = mapRes.matchedTopicId || '';
+      const finalTopicName = mapRes.matchedTopicName || topicNameInput || '';
+
+      const issues = [...(q.validationIssues || [])];
+      const warnings: string[] = [];
+
+      if (mapRes.isInvalidId) {
+        warnings.push(`⚠️ Topic ID '${topicIdInput}' ডাটাবেজে পাওয়া যায়নি (NULL হিসেবে সেভ হবে)`);
+      }
+
+      let status: 'valid' | 'warning' | 'invalid' = 'valid';
+      if (issues.length > 0) {
+        status = 'invalid';
+      } else if (warnings.length > 0) {
+        status = 'warning';
+      }
+
+      return {
+        ...q,
+        topic_id: finalTopicId,
+        topic_name: finalTopicName,
+        status: status,
+        isValid: status !== 'invalid',
+        isWarning: status === 'warning',
+        warningIssues: warnings,
+        smartMapped: mapRes.smartMapped,
+        smartMappedNote: mapRes.smartMappedNote || undefined,
+      };
+    });
+  };
+
+  // Detect missing topic IDs in current parsed list
+  const missingTopicIds = useMemo(() => {
+    const missing: Array<{ topic_id: string; topic_name: string; chapter_id: string; subject_id: string }> = [];
+    
+    parsedQuestions.forEach((q) => {
+      if (q.warningIssues && q.warningIssues.length > 0) {
+        const idMatch = q.warningIssues[0]?.match(/Topic ID '([^']+)'/);
+        const originalId = idMatch ? idMatch[1] : q.topic_id;
+        if (originalId && !missing.some((m) => m.topic_id === originalId)) {
+          missing.push({
+            topic_id: originalId,
+            topic_name: q.topic_name || originalId,
+            chapter_id: q.chapter_id || defaultChapter,
+            subject_id: q.subject_id || defaultSubject,
+          });
+        }
+      }
+    });
+
+    return missing;
+  }, [parsedQuestions, defaultChapter, defaultSubject]);
+
+  // Handle Auto-creating missing topics in Database
+  const handleAutoCreateMissingTopics = async () => {
+    if (missingTopicIds.length === 0) return;
+
+    setIsCreatingMissingTopics(true);
+    setSubmitError(null);
+    setAutoCreateSuccessMsg(null);
+
+    try {
+      let createdCount = 0;
+      const newTopics: Array<TopicRecord> = [];
+
+      for (const item of missingTopicIds) {
+        const res = await createTopic({
+          id: item.topic_id,
+          name: item.topic_name || item.topic_id,
+          bangla_name: item.topic_name || item.topic_id,
+          chapter_id: item.chapter_id,
+          subject_id: item.subject_id as QuestionSubject,
+          paper: item.subject_id.endsWith('_2') ? '2nd' : '1st',
+          star_rating: 3,
+          total_questions: 0,
+          completed_questions: 0,
+        });
+
+        if (res && res.id) {
+          createdCount++;
+          newTopics.push(res);
+        }
+      }
+
+      const updatedDbTopics = [...dbTopics, ...newTopics];
+      setDbTopics(updatedDbTopics);
+
+      // Re-validate parsed questions with updated topics
+      setParsedQuestions((prev) => revalidateParsedItems(prev, updatedDbTopics));
+      setAutoCreateSuccessMsg(`✅ সফলভাবে ${createdCount} টি নতুন টপিক ডাটাবেজে তৈরি করা হয়েছে! ইমপোর্ট প্রিভিউ রিফ্রেশ করা হলো।`);
+    } catch (err: any) {
+      setSubmitError(`টপিক তৈরিতে ত্রুটি: ${err.message || 'সমস্যা হয়েছে'}`);
+    } finally {
+      setIsCreatingMissingTopics(false);
+    }
+  };
+
   // 1. Handle File Selection (Excel .xlsx, .xls, .csv, or .json)
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -106,6 +291,7 @@ export const AdminBulkImportModal: React.FC<AdminBulkImportModalProps> = ({
     setIsProcessingFile(true);
     setParseErrors([]);
     setSubmitError(null);
+    setAutoCreateSuccessMsg(null);
 
     const defaults = getBulkDefaults();
 
@@ -125,6 +311,8 @@ export const AdminBulkImportModal: React.FC<AdminBulkImportModalProps> = ({
         const parsed = jsonValidation.parsedData;
         if (Array.isArray(parsed)) {
           rawList = parsed;
+        } else if (parsed && Array.isArray(parsed.items)) {
+          rawList = parsed.items;
         } else if (parsed && Array.isArray(parsed.questions)) {
           rawList = parsed.questions;
         } else if (parsed && Array.isArray(parsed.data)) {
@@ -132,59 +320,130 @@ export const AdminBulkImportModal: React.FC<AdminBulkImportModalProps> = ({
         }
 
         const enriched: ParsedQuestionItem[] = rawList.map((item, idx) => {
-          const opts = item.options || {};
-          let optA = typeof opts === 'object' && !Array.isArray(opts) ? (opts.A || opts.a || opts['ক'] || '') : '';
-          let optB = typeof opts === 'object' && !Array.isArray(opts) ? (opts.B || opts.b || opts['খ'] || '') : '';
-          let optC = typeof opts === 'object' && !Array.isArray(opts) ? (opts.C || opts.c || opts['গ'] || '') : '';
-          let optD = typeof opts === 'object' && !Array.isArray(opts) ? (opts.D || opts.d || opts['ঘ'] || '') : '';
+          if (importType === 'mcq') {
+            const opts = item.options || {};
+            let optA = typeof opts === 'object' && !Array.isArray(opts) ? (opts.A || opts.a || opts['ক'] || item.option_a || '') : '';
+            let optB = typeof opts === 'object' && !Array.isArray(opts) ? (opts.B || opts.b || opts['খ'] || item.option_b || '') : '';
+            let optC = typeof opts === 'object' && !Array.isArray(opts) ? (opts.C || opts.c || opts['গ'] || item.option_c || '') : '';
+            let optD = typeof opts === 'object' && !Array.isArray(opts) ? (opts.D || opts.d || opts['ঘ'] || item.option_d || '') : '';
 
-          if (Array.isArray(opts) && opts.length >= 4) {
-            optA = opts[0]?.text || '';
-            optB = opts[1]?.text || '';
-            optC = opts[2]?.text || '';
-            optD = opts[3]?.text || '';
+            const qText = item.question_text || item.questionText || item.question || '';
+            const correctAns = item.correct_ans || item.correctAnswer || item.ans || 'A';
+            const expl = item.explanation || item.solution || '';
+
+            return validateAndEnrichQuestion(
+              {
+                id: item.id || `q_json_${idx}_${Date.now()}`,
+                question_text: qText,
+                options: { A: optA, B: optB, C: optC, D: optD },
+                correct_ans: correctAns,
+                explanation: expl,
+                subject_id: item.subject_id || defaults.subject_id,
+                subject_name: item.subject_name || defaults.subject_name,
+                paper: item.paper || defaults.paper,
+                chapter_id: item.chapter_id || defaults.chapter_id,
+                chapter_name: item.chapter_name || defaults.chapter_name,
+                topic_id: item.topic_id || '',
+                topic_name: item.topic_name || '',
+                tags: Array.isArray(item.tags) ? item.tags : defaults.tags,
+                difficulty: item.difficulty || defaults.difficulty,
+                star_rating: item.star_rating || 3,
+                type: 'mcq',
+              },
+              idx,
+              defaults,
+              dbTopics
+            );
+          } else if (importType === 'written') {
+            const qText = item.question_text || item.question || '';
+            const ansText = item.answer_text || item.answer || item.solution || '';
+            const issues: string[] = [];
+            if (!qText.trim()) issues.push('লিখিত প্রশ্নের বিবরণ অনুপস্থিত');
+            if (!ansText.trim()) issues.push('লিখিত প্রশ্নের উত্তর/সমাধান অনুপস্থিত');
+
+            return {
+              id: item.id || `written_${idx}_${Date.now()}`,
+              item_type: 'written',
+              question_text: qText,
+              answer_text: ansText,
+              marks: Number(item.marks) || 5,
+              subject_id: item.subject_id || defaults.subject_id,
+              subject_name: item.subject_name || defaults.subject_name,
+              paper: item.paper || defaults.paper,
+              chapter_id: item.chapter_id || defaults.chapter_id,
+              chapter_name: item.chapter_name || defaults.chapter_name,
+              topic_id: item.topic_id || '',
+              topic_name: item.topic_name || '',
+              tags: Array.isArray(item.tags) ? item.tags : defaults.tags,
+              difficulty: item.difficulty || defaults.difficulty,
+              status: issues.length > 0 ? 'invalid' : 'valid',
+              isValid: issues.length === 0,
+              validationIssues: issues,
+              rawSourceIndex: idx + 1,
+            };
+          } else if (importType === 'topic') {
+            const topicId = item.id || item.topic_id || '';
+            const name = item.name || item.bangla_name || item.topic_name || '';
+            const issues: string[] = [];
+            if (!topicId.trim()) issues.push('টপিক আইডি (Topic ID) অনুপস্থিত');
+            if (!name.trim()) issues.push('টপিকের নাম (Topic Name) অনুপস্থিত');
+
+            return {
+              id: topicId,
+              item_type: 'topic',
+              topic_code: item.topic_code || topicId,
+              name: name,
+              bangla_name: item.bangla_name || name,
+              subject_id: item.subject_id || defaults.subject_id,
+              subject_name: item.subject_name || defaults.subject_name,
+              paper: item.paper || defaults.paper,
+              chapter_id: item.chapter_id || defaults.chapter_id,
+              chapter_name: item.chapter_name || defaults.chapter_name,
+              star_rating: item.star_rating || 3,
+              status: issues.length > 0 ? 'invalid' : 'valid',
+              isValid: issues.length === 0,
+              validationIssues: issues,
+              rawSourceIndex: idx + 1,
+            };
+          } else {
+            // knowledge_snippet
+            const title = item.title || item.name || '';
+            const content = item.content || item.description || '';
+            const issues: string[] = [];
+            if (!title.trim()) issues.push('স্নিপেট শিরোনাম (Title) অনুপস্থিত');
+            if (!content.trim()) issues.push('স্নিপেট কনটেন্ট (Content) অনুপস্থিত');
+
+            return {
+              id: item.id || `ks_${idx}_${Date.now()}`,
+              item_type: 'knowledge_snippet',
+              title: title,
+              content: content,
+              importance: item.importance || 'high',
+              subject_id: item.subject_id || defaults.subject_id,
+              subject_name: item.subject_name || defaults.subject_name,
+              paper: item.paper || defaults.paper,
+              chapter_id: item.chapter_id || defaults.chapter_id,
+              chapter_name: item.chapter_name || defaults.chapter_name,
+              topic_id: item.topic_id || '',
+              topic_name: item.topic_name || '',
+              star_rating: item.star_rating || 3,
+              tags: Array.isArray(item.tags) ? item.tags : defaults.tags,
+              status: issues.length > 0 ? 'invalid' : 'valid',
+              isValid: issues.length === 0,
+              validationIssues: issues,
+              rawSourceIndex: idx + 1,
+            };
           }
-
-          const qText = item.question_text || item.questionText || item.question || '';
-          const correctAns = item.correct_ans || item.correctAnswer || item.ans || 'A';
-          const expl = item.explanation || item.solution || '';
-
-          const issues: string[] = [];
-          if (!qText.trim()) issues.push('প্রশ্নের বিবরণ অনুপস্থিত');
-          if (!optA.trim()) issues.push('অপশন A অনুপস্থিত');
-          if (!optB.trim()) issues.push('অপশন B অনুপস্থিত');
-          if (!optC.trim()) issues.push('অপশন C অনুপস্থিত');
-          if (!optD.trim()) issues.push('অপশন D অনুপস্থিত');
-
-          return {
-            id: item.id || `q_json_${idx}_${Date.now()}`,
-            question_text: qText,
-            options: { A: optA, B: optB, C: optC, D: optD },
-            correct_ans: (correctAns.toUpperCase() as any) || 'A',
-            explanation: expl,
-            subject_id: item.subject_id || defaults.subject_id,
-            subject_name: item.subject_name || defaults.subject_name,
-            paper: item.paper || defaults.paper,
-            chapter_id: item.chapter_id || defaults.chapter_id,
-            chapter_name: item.chapter_name || defaults.chapter_name,
-            tags: Array.isArray(item.tags) ? item.tags : defaults.tags,
-            difficulty: item.difficulty || defaults.difficulty,
-            star_rating: item.star_rating || 3,
-            type: item.type || 'mcq',
-            isValid: issues.length === 0,
-            validationIssues: issues,
-            rawSourceIndex: idx + 1,
-          };
         });
 
-        setParsedQuestions(enriched);
+        setParsedQuestions(revalidateParsedItems(enriched));
       } else {
         // Handle Excel (.xlsx, .xls) or CSV
         const result = await parseExcelOrCsvFile(file, defaults);
         if (!result.success && result.errors.length > 0) {
           setParseErrors(result.errors);
         } else {
-          setParsedQuestions(result.questions);
+          setParsedQuestions(revalidateParsedItems(result.questions));
         }
       }
     } catch (err: any) {
@@ -204,13 +463,15 @@ export const AdminBulkImportModal: React.FC<AdminBulkImportModalProps> = ({
 
     setParseErrors([]);
     setSubmitError(null);
+    setAutoCreateSuccessMsg(null);
+
     const defaults = getBulkDefaults();
     const result = parseRawBengaliQuestions(rawBengaliTextInput, defaults);
 
     if (!result.success || result.questions.length === 0) {
       setParseErrors(result.errors.length ? result.errors : ['কোনো প্রশ্ন শনাক্ত করা যায়নি। সঠিক ফরম্যাটে প্রশ্ন দিন।']);
     } else {
-      setParsedQuestions(result.questions);
+      setParsedQuestions(revalidateParsedItems(result.questions));
     }
   };
 
@@ -251,38 +512,43 @@ Ans: A
   const handleApplyDefaultsToAll = () => {
     const defaults = getBulkDefaults();
     setParsedQuestions((prev) =>
-      prev.map((q) => ({
-        ...q,
-        subject_id: defaults.subject_id,
-        subject_name: defaults.subject_name,
-        paper: defaults.paper,
-        chapter_id: defaults.chapter_id,
-        chapter_name: defaults.chapter_name,
-        tags: defaults.tags,
-        difficulty: defaults.difficulty,
-      }))
+      revalidateParsedItems(
+        prev.map((q) => ({
+          ...q,
+          subject_id: defaults.subject_id,
+          subject_name: defaults.subject_name,
+          paper: defaults.paper,
+          chapter_id: defaults.chapter_id,
+          chapter_name: defaults.chapter_name,
+          tags: defaults.tags,
+          difficulty: defaults.difficulty,
+        }))
+      )
     );
   };
 
   // Filtered preview items
   const filteredPreview = useMemo(() => {
-    if (previewFilter === 'valid') return parsedQuestions.filter((q) => q.isValid);
-    if (previewFilter === 'invalid') return parsedQuestions.filter((q) => !q.isValid);
+    if (previewFilter === 'valid') return parsedQuestions.filter((q) => q.status === 'valid');
+    if (previewFilter === 'warning') return parsedQuestions.filter((q) => q.status === 'warning');
+    if (previewFilter === 'invalid') return parsedQuestions.filter((q) => q.status === 'invalid');
     return parsedQuestions;
   }, [parsedQuestions, previewFilter]);
 
-  const validCount = parsedQuestions.filter((q) => q.isValid).length;
-  const invalidCount = parsedQuestions.length - validCount;
+  const validCount = parsedQuestions.filter((q) => q.status === 'valid').length;
+  const warningCount = parsedQuestions.filter((q) => q.status === 'warning').length;
+  const invalidCount = parsedQuestions.filter((q) => q.status === 'invalid').length;
+  const uploadableCount = validCount + warningCount;
 
-  // 3. Final Submit to Backend Database
+  // 3. Final Submit to Backend Database based on Import Content Type
   const handleFinalSubmit = async () => {
     if (parsedQuestions.length === 0) return;
 
-    // Filter out completely invalid questions or notify
-    const questionsToUpload = parsedQuestions.filter((q) => q.isValid);
+    // Filter items that are valid or warnings (warnings get saved with topic_id=NULL or fallback)
+    const itemsToUpload = parsedQuestions.filter((q) => q.isValid || q.status === 'warning');
 
-    if (questionsToUpload.length === 0) {
-      setSubmitError('কোনো ভ্যালিড প্রশ্ন পাওয়া যায়নি। অনুগ্রহ করে লাল চিহ্নিত ত্রুটিযুক্ত প্রশ্নগুলো সংশোধন বা ডিলিট করুন।');
+    if (itemsToUpload.length === 0) {
+      setSubmitError('কোনো ভ্যালিড আইটেম পাওয়া যায়নি। অনুগ্রহ করে লাল চিহ্নিত সমস্যাযুক্ত তথ্য সংশোধন বা ডিলিট করুন।');
       return;
     }
 
@@ -290,31 +556,81 @@ Ans: A
     setSubmitError(null);
 
     try {
-      // Format questions for backend bulk import schema
-      const formatted = questionsToUpload.map((q) => ({
-        subject_id: q.subject_id,
-        subject_name: q.subject_name,
-        paper: q.paper,
-        chapter_id: q.chapter_id,
-        chapter_name: q.chapter_name,
-        topic_id: q.topic_id,
-        topic_name: q.topic_name,
-        category: q.category || 'varsity_a',
-        question_text: q.question_text,
-        options: q.options,
-        correct_ans: q.correct_ans,
-        explanation: q.explanation || '',
-        tags: q.tags || [],
-        difficulty: q.difficulty || 'medium',
-        star_rating: q.star_rating || 3,
-        type: q.type || 'mcq',
-      }));
+      if (importType === 'mcq') {
+        const formatted = itemsToUpload.map((q) => ({
+          subject_id: q.subject_id,
+          subject_name: q.subject_name,
+          paper: q.paper,
+          chapter_id: q.chapter_id,
+          chapter_name: q.chapter_name,
+          topic_id: q.topic_id || undefined,
+          topic_name: q.topic_name,
+          category: q.category || 'varsity_a',
+          question_text: q.question_text || '',
+          options: q.options || { A: '', B: '', C: '', D: '' },
+          correct_ans: q.correct_ans || 'A',
+          explanation: q.explanation || '',
+          tags: q.tags || [],
+          difficulty: q.difficulty || 'medium',
+          star_rating: q.star_rating || 3,
+          type: q.type || 'mcq',
+        }));
 
-      const res = await bulkImportQuestionsApi(formatted);
-      onSuccess(res.count);
-      onClose();
+        const res = await bulkImportQuestionsApi(formatted);
+        onSuccess(res.count);
+        onClose();
+      } else if (importType === 'written') {
+        const formatted = itemsToUpload.map((q) => ({
+          subject_id: q.subject_id,
+          subject_name: q.subject_name,
+          paper: q.paper,
+          chapter_id: q.chapter_id,
+          chapter_name: q.chapter_name,
+          topic_id: q.topic_id || undefined,
+          topic_name: q.topic_name,
+          question_text: q.question_text || '',
+          answer_text: q.answer_text || '',
+          marks: q.marks || 5,
+          tags: q.tags || [],
+          difficulty: q.difficulty || 'medium',
+        }));
+
+        const res = await bulkImportWrittenQuestionsApi(formatted);
+        onSuccess(res.count);
+        onClose();
+      } else if (importType === 'topic') {
+        const formatted = itemsToUpload.map((q) => ({
+          id: q.id || q.topic_code || `top_${Date.now()}`,
+          name: q.name || q.bangla_name || 'নতুন টপিক',
+          bangla_name: q.bangla_name || q.name || 'নতুন টপিক',
+          chapter_id: q.chapter_id || defaultChapter,
+          subject_id: q.subject_id || defaultSubject,
+          paper: q.paper || '1st',
+          star_rating: q.star_rating || 3,
+          topic_code: q.topic_code || q.id,
+        }));
+
+        const res = await bulkImportTopicsApi(formatted);
+        onSuccess(res.count);
+        onClose();
+      } else if (importType === 'knowledge_snippet') {
+        const formatted = itemsToUpload.map((q) => ({
+          title: q.title || 'নলেজ স্নিপেট',
+          content: q.content || '',
+          subject_id: q.subject_id || defaultSubject,
+          chapter_id: q.chapter_id || defaultChapter,
+          topic_id: q.topic_id || undefined,
+          importance: q.importance || 'high',
+          star_rating: q.star_rating || 3,
+          tags: q.tags || [],
+        }));
+
+        const res = await bulkImportKnowledgeSnippetsApi(formatted);
+        onSuccess(res.count);
+        onClose();
+      }
     } catch (err: any) {
-      setSubmitError(err.message || 'ডেটাবেজে প্রশ্ন সংরক্ষণ ব্যর্থ হয়েছে।');
+      setSubmitError(err.message || 'ডেটাবেজে ইমপোর্ট সংরক্ষণ ব্যর্থ হয়েছে।');
     } finally {
       setIsSubmitting(false);
     }
@@ -324,7 +640,7 @@ Ans: A
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-900/70 backdrop-blur-xs flex items-center justify-center p-3 md:p-6 overflow-y-auto">
-      <div className="bg-white rounded-3xl max-w-5xl w-full max-h-[92vh] flex flex-col shadow-2xl border border-slate-200 overflow-hidden animate-in fade-in zoom-in-95 my-auto">
+      <div className="bg-white rounded-3xl max-w-5xl w-full max-h-[94vh] flex flex-col shadow-2xl border border-slate-200 overflow-hidden animate-in fade-in zoom-in-95 my-auto">
         
         {/* Top Header */}
         <div className="p-5 md:p-6 bg-gradient-to-r from-indigo-900 via-slate-900 to-indigo-950 text-white flex items-center justify-between border-b border-indigo-800 shrink-0">
@@ -335,11 +651,11 @@ Ans: A
             <div>
               <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 text-[10px] font-bold uppercase tracking-wider mb-1 border border-emerald-400/30">
                 <Sparkles className="w-3 h-3" />
-                Bulk Question Importer 2.0
+                PrepTest Smart Bulk Importer 3.0
               </div>
-              <h2 className="text-lg md:text-xl font-bold tracking-tight">স্মার্ট বাল্ক প্রশ্ন ইমপোর্টার</h2>
+              <h2 className="text-lg md:text-xl font-bold tracking-tight">স্মার্ট বাল্ক ইমপোর্ট সিস্টেম</h2>
               <p className="text-xs text-indigo-200/80">
-                Excel (.xlsx), CSV, JSON ফাইল আপলোড করুন অথবা মাইক্রোসফট ওয়ার্ড / টেক্সট থেকে সরাসরি প্রশ্ন পেস্ট করুন
+                MCQ প্রশ্ন, লিখিত প্রশ্ন, টপিক ও নলেজ স্নিপেট রেফারেন্সিয়াল ভ্যালিডেশন সহ সহজে ইমপোর্ট করুন
               </p>
             </div>
           </div>
@@ -350,6 +666,60 @@ Ans: A
           >
             <X className="w-5 h-5" />
           </button>
+        </div>
+
+        {/* Content Type Selector Bar */}
+        <div className="bg-indigo-950/40 border-b border-indigo-900/50 p-3 px-6 shrink-0 flex flex-wrap items-center justify-between gap-3 text-xs">
+          <div className="flex items-center gap-2 font-bold text-slate-700">
+            <span className="text-indigo-900 font-extrabold">ইমপোর্ট কন্টেন্ট টাইপ:</span>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => { setImportType('mcq'); setParsedQuestions([]); }}
+              className={`px-3 py-1.5 rounded-xl font-bold transition-all cursor-pointer ${
+                importType === 'mcq'
+                  ? 'bg-indigo-600 text-white shadow-sm'
+                  : 'bg-white text-slate-700 hover:bg-slate-100 border border-slate-200'
+              }`}
+            >
+              📝 MCQ প্রশ্নাবলি (MCQ)
+            </button>
+            <button
+              type="button"
+              onClick={() => { setImportType('written'); setParsedQuestions([]); }}
+              className={`px-3 py-1.5 rounded-xl font-bold transition-all cursor-pointer ${
+                importType === 'written'
+                  ? 'bg-indigo-600 text-white shadow-sm'
+                  : 'bg-white text-slate-700 hover:bg-slate-100 border border-slate-200'
+              }`}
+            >
+              ✍️ লিখিত প্রশ্নাবলি (Written)
+            </button>
+            <button
+              type="button"
+              onClick={() => { setImportType('topic'); setParsedQuestions([]); }}
+              className={`px-3 py-1.5 rounded-xl font-bold transition-all cursor-pointer ${
+                importType === 'topic'
+                  ? 'bg-indigo-600 text-white shadow-sm'
+                  : 'bg-white text-slate-700 hover:bg-slate-100 border border-slate-200'
+              }`}
+            >
+              🎯 টপিক রেকর্ড (Topics)
+            </button>
+            <button
+              type="button"
+              onClick={() => { setImportType('knowledge_snippet'); setParsedQuestions([]); }}
+              className={`px-3 py-1.5 rounded-xl font-bold transition-all cursor-pointer ${
+                importType === 'knowledge_snippet'
+                  ? 'bg-indigo-600 text-white shadow-sm'
+                  : 'bg-white text-slate-700 hover:bg-slate-100 border border-slate-200'
+              }`}
+            >
+              💡 নলেজ স্নিপেট (Knowledge Snippets)
+            </button>
+          </div>
         </div>
 
         {/* Global Settings & Defaults Bar */}
@@ -366,7 +736,7 @@ Ans: A
                 className="text-[11px] font-bold text-indigo-600 hover:text-indigo-800 flex items-center gap-1 cursor-pointer"
               >
                 <RefreshCw className="w-3 h-3" />
-                সকল প্রিভিউ প্রশ্নে প্রয়োগ করুন
+                সকল প্রিভিউ আইটেমে ডিফল্ট প্রয়োগ করুন
               </button>
             )}
           </div>
@@ -448,18 +818,20 @@ Ans: A
               <span>১. ফাইল আপলোড (Excel / CSV / JSON)</span>
             </button>
 
-            <button
-              type="button"
-              onClick={() => setActiveTab('text')}
-              className={`px-4 py-2.5 rounded-t-xl text-xs font-bold flex items-center gap-2 border-b-2 transition-all cursor-pointer ${
-                activeTab === 'text'
-                  ? 'border-indigo-600 text-indigo-600 bg-indigo-50/50'
-                  : 'border-transparent text-slate-500 hover:text-slate-800'
-              }`}
-            >
-              <FileText className="w-4 h-4" />
-              <span>২. টেক্সট পেস্ট (Raw Bengali Text Parser)</span>
-            </button>
+            {importType === 'mcq' && (
+              <button
+                type="button"
+                onClick={() => setActiveTab('text')}
+                className={`px-4 py-2.5 rounded-t-xl text-xs font-bold flex items-center gap-2 border-b-2 transition-all cursor-pointer ${
+                  activeTab === 'text'
+                    ? 'border-indigo-600 text-indigo-600 bg-indigo-50/50'
+                    : 'border-transparent text-slate-500 hover:text-slate-800'
+                }`}
+              >
+                <FileText className="w-4 h-4" />
+                <span>২. টেক্সট পেস্ট (Raw Bengali Text Parser)</span>
+              </button>
+            )}
 
             <button
               type="button"
@@ -476,7 +848,7 @@ Ans: A
           </div>
 
           <div className="text-[11px] font-semibold text-slate-500 hidden md:block">
-            সাপোর্ট: <code className="bg-slate-100 px-1.5 py-0.5 rounded text-indigo-700">.xlsx</code> <code className="bg-slate-100 px-1.5 py-0.5 rounded text-indigo-700">.csv</code> <code className="bg-slate-100 px-1.5 py-0.5 rounded text-indigo-700">.json</code> & বাংলা টেক্সট
+            রেফারেন্সিয়া ভ্যালিডেশন: <span className="text-emerald-700 font-bold">{dbTopics.length} টি টপিক কানেক্টেড</span>
           </div>
         </div>
 
@@ -505,7 +877,7 @@ Ans: A
                   এখানে ক্লিক করে আপনার Excel (.xlsx), CSV বা JSON ফাইল সিলেক্ট করুন
                 </h3>
                 <p className="text-xs text-slate-500 max-w-lg mx-auto leading-relaxed">
-                  গুগল শিট বা মাইক্রোসফট এক্সেল থেকে এক্সপোর্ট করা <span className="font-semibold text-indigo-600">.xlsx</span> বা <span className="font-semibold text-indigo-600">.csv</span> ফাইল ড্রপ করুন। সিস্টেম স্বয়ংক্রিয়ভাবে কলামসমূহ ম্যাপিং করে নেবে।
+                  গুগল শিট বা এক্সেলে সাজানো ফাইল ড্রপ করুন। সিস্টেমে সিলেক্ট করা <span className="font-bold text-indigo-600">[{importType.toUpperCase()}]</span> ফরম্যাটে পার্স ও ভ্যালিডেশন করা হবে।
                 </p>
 
                 {uploadedFileName && (
@@ -518,7 +890,7 @@ Ans: A
                 {isProcessingFile && (
                   <div className="mt-4 flex items-center justify-center gap-2 text-xs font-semibold text-indigo-600">
                     <RefreshCw className="w-4 h-4 animate-spin" />
-                    <span>ফাইল প্রসেস ও ভ্যালিডেশন করা হচ্ছে...</span>
+                    <span>ফাইল প্রসেস ও রেফারেন্স ভ্যালিডেশন করা হচ্ছে...</span>
                   </div>
                 )}
               </div>
@@ -526,13 +898,13 @@ Ans: A
           )}
 
           {/* TAB 2: RAW BENGALI TEXT PARSER */}
-          {activeTab === 'text' && (
+          {activeTab === 'text' && importType === 'mcq' && (
             <div className="space-y-4">
               <div className="flex items-center justify-between">
                 <div>
                   <h3 className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
                     <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
-                    মাইক্রোসফট ওয়ার্ড বা ফেসবুক পোস্ট থেকে সরাসরি প্রশ্ন পেস্ট করুন:
+                    মাইক্রোসফট ওয়ার্ড বা টেক্সট থেকে সরাসরি MCQ প্রশ্ন পেস্ট করুন:
                   </h3>
                   <p className="text-[11px] text-slate-500 mt-0.5">
                     প্যাটার্ন: <code className="bg-slate-100 px-1 py-0.5 rounded text-indigo-700">১. প্রশ্ন... (ক) অপশন (খ) অপশন (গ) অপশন (ঘ) অপশন উত্তর: ক ব্যাখ্যা: ...</code>
@@ -575,53 +947,37 @@ Ans: A
               <div className="p-4 rounded-2xl bg-indigo-50 border border-indigo-100 flex items-start gap-3">
                 <Info className="w-5 h-5 text-indigo-600 shrink-0 mt-0.5" />
                 <div className="text-xs text-indigo-900 space-y-1">
-                  <p className="font-bold">রেডিমেড টেমপ্লেট ব্যবহার করে শত শত প্রশ্ন সহজে এন্ট্রি করুন:</p>
+                  <p className="font-bold">রেডিমেড টেমপ্লেট ব্যবহার করে বাল্ক ডেটা ইমপোর্ট করুন:</p>
                   <p className="text-indigo-800/80 leading-relaxed">
-                    নিচের যেকোনো একটি টেমপ্লেট ডাউনলোড করুন। ফাইলে পদার্থবিজ্ঞান, রসায়ন, গণিত ও জীববিজ্ঞানের নমুনা প্রশ্নের কলাম সাজানো রয়েছে। ডেটা এন্ট্রি শেষ করে ফাইলটি এখানে ড্রপ করলেই লাইভ ডেটাবেজে ইমপোর্ট হয়ে যাবে।
+                    বর্তমানে নির্বাচিত টাইপ: <span className="font-bold text-indigo-950 underline">{importType.toUpperCase()}</span>। নিচের যেকোনো একটি টেমপ্লেট ডাউনলোড করে সঠিক তথ্য পুরণ করে আপলোড করুন।
                   </p>
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                {/* Excel Template Card */}
-                <div className="bg-white rounded-2xl p-5 border border-emerald-200 shadow-sm flex flex-col justify-between hover:border-emerald-400 transition-colors">
-                  <div>
-                    <div className="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center mb-3">
-                      <FileSpreadsheet className="w-5 h-5" />
-                    </div>
-                    <h4 className="text-sm font-bold text-slate-900 mb-1">Excel Template (.xlsx)</h4>
-                    <p className="text-xs text-slate-500 leading-relaxed mb-4">
-                      মাইক্রোসফট এক্সেল বা গুগল শিট ব্যবহারকারীদের জন্য আদর্শ। সঠিক কলাম ও উইডথ কনফিগার করা।
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={downloadExcelTemplate}
-                    className="w-full py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold flex items-center justify-center gap-1.5 shadow-sm transition-colors cursor-pointer"
-                  >
-                    <Download className="w-3.5 h-3.5" />
-                    Download Excel Template
-                  </button>
-                </div>
-
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {/* CSV Template Card */}
                 <div className="bg-white rounded-2xl p-5 border border-blue-200 shadow-sm flex flex-col justify-between hover:border-blue-400 transition-colors">
                   <div>
                     <div className="w-10 h-10 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center mb-3">
                       <FileText className="w-5 h-5" />
                     </div>
-                    <h4 className="text-sm font-bold text-slate-900 mb-1">CSV Template (.csv)</h4>
+                    <h4 className="text-sm font-bold text-slate-900 mb-1">{importType.toUpperCase()} CSV Template (.csv)</h4>
                     <p className="text-xs text-slate-500 leading-relaxed mb-4">
-                      UTF-8 BOM এনকোডিং সহ সিএসভি ফাইল। বাংলা ফন্ট কোনো বিকৃতি ছাড়াই এক্সেলে ওপেন হবে।
+                      UTF-8 BOM এনকোডিং সহ সিএসভি ফাইল। বাংলা ফন্ট কোনো বিকৃতি ছাড়াই এক্সেলে বা গুগল শিটে ওপেন হবে।
                     </p>
                   </div>
                   <button
                     type="button"
-                    onClick={downloadCsvTemplate}
+                    onClick={() => {
+                      if (importType === 'mcq') downloadCsvTemplate();
+                      else if (importType === 'written') downloadWrittenQuestionCsvTemplate();
+                      else if (importType === 'topic') downloadTopicCsvTemplate();
+                      else downloadKnowledgeSnippetCsvTemplate();
+                    }}
                     className="w-full py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold flex items-center justify-center gap-1.5 shadow-sm transition-colors cursor-pointer"
                   >
                     <Download className="w-3.5 h-3.5" />
-                    Download CSV Template
+                    Download {importType.toUpperCase()} CSV Template
                   </button>
                 </div>
 
@@ -631,18 +987,23 @@ Ans: A
                     <div className="w-10 h-10 rounded-xl bg-slate-100 text-slate-700 flex items-center justify-center mb-3">
                       <FileJson className="w-5 h-5" />
                     </div>
-                    <h4 className="text-sm font-bold text-slate-900 mb-1">JSON Template (.json)</h4>
+                    <h4 className="text-sm font-bold text-slate-900 mb-1">{importType.toUpperCase()} JSON Template (.json)</h4>
                     <p className="text-xs text-slate-500 leading-relaxed mb-4">
                       ডেভেলপার ও স্ক্রিপ্টিং ব্যবহারের জন্য স্ট্যান্ডার্ড ফরম্যাটেড JSON অ্যারে টেমপ্লেট।
                     </p>
                   </div>
                   <button
                     type="button"
-                    onClick={downloadJsonTemplate}
+                    onClick={() => {
+                      if (importType === 'mcq') downloadJsonTemplate();
+                      else if (importType === 'written') downloadWrittenQuestionJsonTemplate();
+                      else if (importType === 'topic') downloadTopicJsonTemplate();
+                      else downloadKnowledgeSnippetJsonTemplate();
+                    }}
                     className="w-full py-2.5 rounded-xl bg-slate-800 hover:bg-slate-900 text-white text-xs font-bold flex items-center justify-center gap-1.5 shadow-sm transition-colors cursor-pointer"
                   >
                     <Download className="w-3.5 h-3.5" />
-                    Download JSON Template
+                    Download {importType.toUpperCase()} JSON Template
                   </button>
                 </div>
               </div>
@@ -664,6 +1025,50 @@ Ans: A
             </div>
           )}
 
+          {/* AUTO-CREATE MISSING TOPICS BANNER (Requirement 3 & 4) */}
+          {missingTopicIds.length > 0 && (
+            <div className="p-4 rounded-2xl bg-amber-50 border border-amber-300 text-xs text-amber-900 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-xs">
+              <div className="flex items-start gap-2.5">
+                <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+                <div>
+                  <div className="font-bold text-amber-950 text-sm">
+                    ⚠️ ডাটাবেজে {missingTopicIds.length} টি অবিদ্যমান topic_id পাওয়া গেছে!
+                  </div>
+                  <p className="text-amber-800 text-xs mt-0.5">
+                    আইডিগুলো: {missingTopicIds.map((m) => `'${m.topic_id}'`).join(', ')}। এগুলো ডাটাবেজে তৈরি না করলে topic_id = NULL হিসেবে সেভ হবে।
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={handleAutoCreateMissingTopics}
+                disabled={isCreatingMissingTopics}
+                className="w-full sm:w-auto px-4 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold flex items-center justify-center gap-1.5 shadow-md transition-all cursor-pointer shrink-0 disabled:opacity-50"
+              >
+                {isCreatingMissingTopics ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    <span>টপিক তৈরি হচ্ছে...</span>
+                  </>
+                ) : (
+                  <>
+                    <PlusCircle className="w-4 h-4" />
+                    <span>⚡ অনুপস্থিত টপিকসমূহ এখনই ডাটাবেজে তৈরি করুন</span>
+                  </>
+                )}
+              </button>
+            </div>
+          )}
+
+          {/* Success Banner after Auto Creation */}
+          {autoCreateSuccessMsg && (
+            <div className="p-3.5 rounded-2xl bg-emerald-50 border border-emerald-300 text-xs font-bold text-emerald-900 flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+              <span>{autoCreateSuccessMsg}</span>
+            </div>
+          )}
+
           {/* PRE-FLIGHT LIVE PREVIEW TABLE */}
           {parsedQuestions.length > 0 && (
             <div className="space-y-4 pt-2 border-t border-slate-200">
@@ -672,18 +1077,18 @@ Ans: A
                 <div>
                   <h4 className="text-sm font-bold flex items-center gap-2">
                     <Eye className="w-4 h-4 text-indigo-400" />
-                    <span>ইমপোর্ট প্রি-ফ্লাইট টেবিল (Pre-flight Review)</span>
+                    <span>ইমপোর্ট প্রি-ফ্লাইট টেবিল (Pre-flight Review) - [{importType.toUpperCase()}]</span>
                   </h4>
                   <p className="text-xs text-slate-400 mt-0.5">
-                    মোট <span className="text-white font-bold">{parsedQuestions.length}</span> টি প্রশ্ন শনাক্ত হয়েছে। ডেটাবেজে সাবমিট করার আগে তথ্য যাচাই করুন।
+                    মোট <span className="text-white font-bold">{parsedQuestions.length}</span> টি আইটেম পার্স করা হয়েছে।
                   </p>
                 </div>
 
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2 text-xs">
                   <button
                     type="button"
                     onClick={() => setPreviewFilter('all')}
-                    className={`px-3 py-1.5 rounded-xl text-xs font-bold cursor-pointer transition-colors ${
+                    className={`px-3 py-1.5 rounded-xl font-bold cursor-pointer transition-colors ${
                       previewFilter === 'all' ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
                     }`}
                   >
@@ -692,21 +1097,32 @@ Ans: A
                   <button
                     type="button"
                     onClick={() => setPreviewFilter('valid')}
-                    className={`px-3 py-1.5 rounded-xl text-xs font-bold cursor-pointer transition-colors ${
+                    className={`px-3 py-1.5 rounded-xl font-bold cursor-pointer transition-colors ${
                       previewFilter === 'valid' ? 'bg-emerald-600 text-white' : 'bg-slate-800 text-emerald-400 hover:bg-slate-700'
                     }`}
                   >
-                    ✅ নির্ভুল ({validCount})
+                    ✅ Valid ({validCount})
                   </button>
+                  {warningCount > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setPreviewFilter('warning')}
+                      className={`px-3 py-1.5 rounded-xl font-bold cursor-pointer transition-colors ${
+                        previewFilter === 'warning' ? 'bg-amber-500 text-white' : 'bg-slate-800 text-amber-400 hover:bg-slate-700'
+                      }`}
+                    >
+                      ⚠️ Warning ({warningCount})
+                    </button>
+                  )}
                   {invalidCount > 0 && (
                     <button
                       type="button"
                       onClick={() => setPreviewFilter('invalid')}
-                      className={`px-3 py-1.5 rounded-xl text-xs font-bold cursor-pointer transition-colors ${
+                      className={`px-3 py-1.5 rounded-xl font-bold cursor-pointer transition-colors ${
                         previewFilter === 'invalid' ? 'bg-red-600 text-white' : 'bg-slate-800 text-red-400 hover:bg-slate-700'
                       }`}
                     >
-                      ❌ সমস্যাযুক্ত ({invalidCount})
+                      ❌ Invalid ({invalidCount})
                     </button>
                   )}
                 </div>
@@ -718,11 +1134,39 @@ Ans: A
                   <thead className="bg-slate-50 text-slate-600 font-bold border-b border-slate-200 sticky top-0 z-10">
                     <tr>
                       <th className="py-2.5 px-3 w-12 text-center">#</th>
-                      <th className="py-2.5 px-3 w-64">প্রশ্ন (Question & LaTeX)</th>
-                      <th className="py-2.5 px-3 w-60">অপশনসমূহ (A, B, C, D)</th>
-                      <th className="py-2.5 px-3 w-20 text-center">উত্তর</th>
-                      <th className="py-2.5 px-3 w-40">অধ্যায় ও ট্যাগ</th>
-                      <th className="py-2.5 px-3 w-24 text-center">স্ট্যাটাস</th>
+                      {importType === 'mcq' && (
+                        <>
+                          <th className="py-2.5 px-3 w-64">প্রশ্ন (Question & LaTeX)</th>
+                          <th className="py-2.5 px-3 w-56">অপশনসমূহ (A, B, C, D)</th>
+                          <th className="py-2.5 px-3 w-16 text-center">উত্তর</th>
+                          <th className="py-2.5 px-3 w-48">অধ্যায়, টপিক ও আইডি</th>
+                        </>
+                      )}
+                      {importType === 'written' && (
+                        <>
+                          <th className="py-2.5 px-3 w-64">লিখিত প্রশ্ন</th>
+                          <th className="py-2.5 px-3 w-64">উত্তর / সমাধান</th>
+                          <th className="py-2.5 px-3 w-16 text-center">মার্কেট</th>
+                          <th className="py-2.5 px-3 w-48">অধ্যায় ও টপিক</th>
+                        </>
+                      )}
+                      {importType === 'topic' && (
+                        <>
+                          <th className="py-2.5 px-3 w-40">Topic ID / Code</th>
+                          <th className="py-2.5 px-3 w-56">টপিক এর নাম (Bangla Name)</th>
+                          <th className="py-2.5 px-3 w-48">অধ্যায় ও বিষয়</th>
+                          <th className="py-2.5 px-3 w-24 text-center">স্টার রেটিং</th>
+                        </>
+                      )}
+                      {importType === 'knowledge_snippet' && (
+                        <>
+                          <th className="py-2.5 px-3 w-48">শিরোনাম (Title)</th>
+                          <th className="py-2.5 px-3 w-64">কনটেন্ট (Content)</th>
+                          <th className="py-2.5 px-3 w-32">গুরুত্ব (Importance)</th>
+                          <th className="py-2.5 px-3 w-48">অধ্যায় ও টপিক</th>
+                        </>
+                      )}
+                      <th className="py-2.5 px-3 w-36 text-center">স্ট্যাটাস (Status)</th>
                       <th className="py-2.5 px-3 w-12 text-center">অ্যাকশন</th>
                     </tr>
                   </thead>
@@ -730,74 +1174,157 @@ Ans: A
                     {filteredPreview.map((q, idx) => (
                       <tr
                         key={q.id || idx}
-                        className={`hover:bg-slate-50 transition-colors ${!q.isValid ? 'bg-red-50/40' : ''}`}
+                        className={`hover:bg-slate-50 transition-colors ${
+                          q.status === 'invalid'
+                            ? 'bg-red-50/40'
+                            : q.status === 'warning'
+                            ? 'bg-amber-50/40'
+                            : ''
+                        }`}
                       >
                         <td className="py-2.5 px-3 text-center text-slate-400 font-bold">{idx + 1}</td>
                         
-                        {/* Question Text */}
-                        <td className="py-2.5 px-3">
-                          <div className="font-medium text-slate-900 line-clamp-3 leading-relaxed">
-                            <MathText text={q.question_text} />
-                          </div>
-                          {q.explanation && (
-                            <div className="text-[10px] text-slate-500 mt-1 line-clamp-1 italic">
-                              💡 <MathText text={q.explanation} />
-                            </div>
-                          )}
-                        </td>
+                        {/* MCQ Specific Columns */}
+                        {importType === 'mcq' && (
+                          <>
+                            <td className="py-2.5 px-3">
+                              <div className="font-medium text-slate-900 line-clamp-3 leading-relaxed">
+                                <MathText text={q.question_text || ''} />
+                              </div>
+                              {q.explanation && (
+                                <div className="text-[10px] text-slate-500 mt-1 line-clamp-1 italic">
+                                  💡 <MathText text={q.explanation} />
+                                </div>
+                              )}
+                            </td>
 
-                        {/* Options */}
-                        <td className="py-2.5 px-3 space-y-0.5 text-[11px]">
-                          <div className={q.correct_ans === 'A' ? 'font-bold text-emerald-700' : 'text-slate-600'}>
-                            (A) <MathText text={q.options.A} />
-                          </div>
-                          <div className={q.correct_ans === 'B' ? 'font-bold text-emerald-700' : 'text-slate-600'}>
-                            (B) <MathText text={q.options.B} />
-                          </div>
-                          <div className={q.correct_ans === 'C' ? 'font-bold text-emerald-700' : 'text-slate-600'}>
-                            (C) <MathText text={q.options.C} />
-                          </div>
-                          <div className={q.correct_ans === 'D' ? 'font-bold text-emerald-700' : 'text-slate-600'}>
-                            (D) <MathText text={q.options.D} />
-                          </div>
-                        </td>
+                            <td className="py-2.5 px-3 space-y-0.5 text-[11px]">
+                              <div className={q.correct_ans === 'A' ? 'font-bold text-emerald-700' : 'text-slate-600'}>
+                                (A) <MathText text={q.options?.A || ''} />
+                              </div>
+                              <div className={q.correct_ans === 'B' ? 'font-bold text-emerald-700' : 'text-slate-600'}>
+                                (B) <MathText text={q.options?.B || ''} />
+                              </div>
+                              <div className={q.correct_ans === 'C' ? 'font-bold text-emerald-700' : 'text-slate-600'}>
+                                (C) <MathText text={q.options?.C || ''} />
+                              </div>
+                              <div className={q.correct_ans === 'D' ? 'font-bold text-emerald-700' : 'text-slate-600'}>
+                                (D) <MathText text={q.options?.D || ''} />
+                              </div>
+                            </td>
 
-                        {/* Correct Answer */}
+                            <td className="py-2.5 px-3 text-center">
+                              <span className="inline-block px-2.5 py-1 rounded-lg bg-emerald-100 text-emerald-800 font-bold text-xs">
+                                {q.correct_ans}
+                              </span>
+                            </td>
+
+                            <td className="py-2.5 px-3 text-[11px] text-slate-600">
+                              <div className="font-semibold text-slate-800">{q.chapter_name || q.chapter_id}</div>
+                              {q.topic_id ? (
+                                <div className="text-emerald-700 font-bold text-[10px]">
+                                  🎯 {q.topic_name || q.topic_id} ({q.topic_id})
+                                </div>
+                              ) : (
+                                <div className="text-amber-600 text-[10px] font-semibold">⚠️ No topic matched</div>
+                              )}
+                              {q.smartMappedNote && (
+                                <div className="text-[9px] text-indigo-600 font-medium mt-0.5">
+                                  {q.smartMappedNote}
+                                </div>
+                              )}
+                            </td>
+                          </>
+                        )}
+
+                        {/* WRITTEN Specific Columns */}
+                        {importType === 'written' && (
+                          <>
+                            <td className="py-2.5 px-3 font-medium text-slate-900">
+                              <MathText text={q.question_text || ''} />
+                            </td>
+                            <td className="py-2.5 px-3 text-slate-600 text-[11px]">
+                              <MathText text={q.answer_text || ''} />
+                            </td>
+                            <td className="py-2.5 px-3 text-center font-bold text-indigo-700">
+                              {q.marks || 5}
+                            </td>
+                            <td className="py-2.5 px-3 text-[11px] text-slate-600">
+                              <div>{q.chapter_name || q.chapter_id}</div>
+                              {q.topic_id && <div className="text-emerald-700 font-semibold">{q.topic_id}</div>}
+                            </td>
+                          </>
+                        )}
+
+                        {/* TOPIC Specific Columns */}
+                        {importType === 'topic' && (
+                          <>
+                            <td className="py-2.5 px-3 font-mono font-bold text-indigo-700">
+                              {q.id}
+                            </td>
+                            <td className="py-2.5 px-3 font-bold text-slate-900">
+                              {q.name || q.bangla_name}
+                            </td>
+                            <td className="py-2.5 px-3 text-[11px] text-slate-600">
+                              <div>{q.chapter_id}</div>
+                              <div className="text-slate-400">{q.subject_id}</div>
+                            </td>
+                            <td className="py-2.5 px-3 text-center font-bold text-amber-600">
+                              ★ {q.star_rating || 3}
+                            </td>
+                          </>
+                        )}
+
+                        {/* KNOWLEDGE SNIPPET Specific Columns */}
+                        {importType === 'knowledge_snippet' && (
+                          <>
+                            <td className="py-2.5 px-3 font-bold text-slate-900">
+                              {q.title}
+                            </td>
+                            <td className="py-2.5 px-3 text-slate-600 text-[11px] line-clamp-2">
+                              {q.content}
+                            </td>
+                            <td className="py-2.5 px-3 text-xs font-bold text-indigo-600">
+                              {q.importance || 'high'}
+                            </td>
+                            <td className="py-2.5 px-3 text-[11px] text-slate-600">
+                              <div>{q.chapter_id}</div>
+                              {q.topic_id && <div className="text-emerald-700 font-semibold">{q.topic_id}</div>}
+                            </td>
+                          </>
+                        )}
+
+                        {/* Validation Status (Multi-level) */}
                         <td className="py-2.5 px-3 text-center">
-                          <span className="inline-block px-2.5 py-1 rounded-lg bg-emerald-100 text-emerald-800 font-bold text-xs">
-                            {q.correct_ans}
-                          </span>
-                        </td>
-
-                        {/* Chapter & Tags */}
-                        <td className="py-2.5 px-3 text-[11px] text-slate-600">
-                          <div className="font-semibold text-slate-800">{q.subject_name || q.subject_id}</div>
-                          <div className="text-slate-500">{q.chapter_name || q.chapter_id}</div>
-                          {q.tags && q.tags.length > 0 && (
-                            <div className="flex flex-wrap gap-1 mt-1">
-                              {q.tags.slice(0, 2).map((t, ti) => (
-                                <span key={ti} className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 text-[10px]">
-                                  {t}
-                                </span>
-                              ))}
-                            </div>
-                          )}
-                        </td>
-
-                        {/* Validation Status */}
-                        <td className="py-2.5 px-3 text-center">
-                          {q.isValid ? (
-                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 font-bold text-[10px]">
+                          {q.status === 'valid' && (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800 font-bold text-[10px]">
                               <Check className="w-3 h-3 text-emerald-600" />
                               Valid
                             </span>
-                          ) : (
+                          )}
+
+                          {q.status === 'warning' && (
                             <div className="inline-flex flex-col items-center">
-                              <span className="px-2 py-0.5 rounded-full bg-red-100 text-red-700 font-bold text-[10px]">
-                                Error
+                              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-800 font-bold text-[10px]">
+                                <AlertTriangle className="w-3 h-3 text-amber-600" />
+                                Warning
                               </span>
-                              {q.validationIssues && (
-                                <span className="text-[9px] text-red-600 mt-0.5 max-w-[100px] truncate" title={q.validationIssues.join(', ')}>
+                              {q.warningIssues && q.warningIssues.length > 0 && (
+                                <span className="text-[9px] text-amber-700 font-semibold mt-0.5 max-w-[120px] truncate" title={q.warningIssues.join(', ')}>
+                                  {q.warningIssues[0]}
+                                </span>
+                              )}
+                            </div>
+                          )}
+
+                          {q.status === 'invalid' && (
+                            <div className="inline-flex flex-col items-center">
+                              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-red-100 text-red-800 font-bold text-[10px]">
+                                <AlertCircle className="w-3 h-3 text-red-600" />
+                                Invalid
+                              </span>
+                              {q.validationIssues && q.validationIssues.length > 0 && (
+                                <span className="text-[9px] text-red-600 mt-0.5 max-w-[120px] truncate" title={q.validationIssues.join(', ')}>
                                   {q.validationIssues[0]}
                                 </span>
                               )}
@@ -838,10 +1365,10 @@ Ans: A
           <div className="text-xs text-slate-500">
             {parsedQuestions.length > 0 ? (
               <span>
-                মোট <strong className="text-slate-800">{validCount}</strong> টি প্রস্তুত প্রশ্ন ডেটাবেজে যুক্ত হতে যাচ্ছে।
+                মোট <strong className="text-slate-800">{uploadableCount}</strong> টি প্রস্তুত রেকর্ড ডেটাবেজে ইমপোর্ট হতে যাচ্ছে (Valid: {validCount}, Warning: {warningCount})।
               </span>
             ) : (
-              <span>ফাইল আপলোড বা টেক্সট পেস্ট করে প্রিভিউ দেখুন।</span>
+              <span>ফাইল আপলোড বা টেক্সট পেস্ট করে ইমপোর্ট প্রিভিউ দেখুন।</span>
             )}
           </div>
 
@@ -856,7 +1383,7 @@ Ans: A
 
             <button
               type="button"
-              disabled={validCount === 0 || isSubmitting}
+              disabled={uploadableCount === 0 || isSubmitting}
               onClick={handleFinalSubmit}
               className="flex-1 sm:flex-none px-6 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold flex items-center justify-center gap-2 shadow-md transition-colors cursor-pointer disabled:opacity-40"
             >
@@ -868,7 +1395,7 @@ Ans: A
               ) : (
                 <>
                   <Database className="w-4 h-4" />
-                  <span>{validCount > 0 ? `এক ক্লিকে ${validCount} টি প্রশ্ন আপলোড করুন` : 'আপলোড করুন'}</span>
+                  <span>{uploadableCount > 0 ? `এক ক্লিকে ${uploadableCount} টি ${importType.toUpperCase()} ইমপোর্ট করুন` : 'আপলোড করুন'}</span>
                 </>
               )}
             </button>

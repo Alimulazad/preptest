@@ -20,6 +20,8 @@ import {
   updateWrittenQuestionInDb,
   deleteWrittenQuestionFromDb,
   bulkImportWrittenQuestions,
+  bulkImportTopics,
+  bulkImportKnowledgeSnippets,
   getAllTopics,
   getTopicById,
   insertTopic,
@@ -1759,6 +1761,90 @@ app.post(
     }
   }
 );
+
+// POST /api/admin/written-questions/bulk-import
+app.post('/api/admin/written-questions/bulk-import', authenticateAdmin, async (req: Request, res: Response) => {
+  try {
+    let rawItems: any[] = [];
+    if (Array.isArray(req.body)) {
+      rawItems = req.body;
+    } else if (req.body && Array.isArray(req.body.questions)) {
+      rawItems = req.body.questions;
+    } else if (req.body && Array.isArray(req.body.data)) {
+      rawItems = req.body.data;
+    }
+
+    if (!rawItems || rawItems.length === 0) {
+      return res.status(400).json({ error: 'No written questions found in payload' });
+    }
+
+    const imported = await bulkImportWrittenQuestions(rawItems);
+    return res.status(200).json({
+      success: true,
+      count: imported.length,
+      message: `Successfully imported ${imported.length} written questions.`,
+    });
+  } catch (error: any) {
+    console.error('Error in bulk import written questions:', error);
+    return res.status(500).json({ error: 'Written questions bulk import failed', details: error.message });
+  }
+});
+
+// POST /api/admin/topics/bulk-import
+app.post('/api/admin/topics/bulk-import', authenticateAdmin, async (req: Request, res: Response) => {
+  try {
+    let rawItems: any[] = [];
+    if (Array.isArray(req.body)) {
+      rawItems = req.body;
+    } else if (req.body && Array.isArray(req.body.topics)) {
+      rawItems = req.body.topics;
+    } else if (req.body && Array.isArray(req.body.data)) {
+      rawItems = req.body.data;
+    }
+
+    if (!rawItems || rawItems.length === 0) {
+      return res.status(400).json({ error: 'No topics found in payload' });
+    }
+
+    const imported = await bulkImportTopics(rawItems);
+    return res.status(200).json({
+      success: true,
+      count: imported.length,
+      message: `Successfully imported ${imported.length} topics.`,
+    });
+  } catch (error: any) {
+    console.error('Error in bulk import topics:', error);
+    return res.status(500).json({ error: 'Topics bulk import failed', details: error.message });
+  }
+});
+
+// POST /api/admin/knowledge-snippets/bulk-import
+app.post('/api/admin/knowledge-snippets/bulk-import', authenticateAdmin, async (req: Request, res: Response) => {
+  try {
+    let rawItems: any[] = [];
+    if (Array.isArray(req.body)) {
+      rawItems = req.body;
+    } else if (req.body && Array.isArray(req.body.snippets)) {
+      rawItems = req.body.snippets;
+    } else if (req.body && Array.isArray(req.body.data)) {
+      rawItems = req.body.data;
+    }
+
+    if (!rawItems || rawItems.length === 0) {
+      return res.status(400).json({ error: 'No knowledge snippets found in payload' });
+    }
+
+    const imported = await bulkImportKnowledgeSnippets(rawItems);
+    return res.status(200).json({
+      success: true,
+      count: imported.length,
+      message: `Successfully imported ${imported.length} knowledge snippets.`,
+    });
+  } catch (error: any) {
+    console.error('Error in bulk import knowledge snippets:', error);
+    return res.status(500).json({ error: 'Knowledge snippets bulk import failed', details: error.message });
+  }
+});
 
 // POST /api/reports (Submit question bug or error report)
 app.post('/api/reports', async (req: Request, res: Response) => {

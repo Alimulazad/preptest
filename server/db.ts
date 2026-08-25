@@ -2821,3 +2821,21 @@ export async function bulkImportWrittenQuestions(items: Partial<WrittenQuestion>
   }
   return imported;
 }
+
+export async function bulkImportTopics(items: Partial<TopicRecord>[]): Promise<TopicRecord[]> {
+  const imported: TopicRecord[] = [];
+  for (const item of items) {
+    const created = await insertTopic(item);
+    imported.push(created);
+  }
+  return imported;
+}
+
+export async function bulkImportKnowledgeSnippets(items: Partial<KnowledgeSnippet>[]): Promise<KnowledgeSnippet[]> {
+  const imported: KnowledgeSnippet[] = [];
+  for (const item of items) {
+    const created = await insertKnowledgeSnippet(item);
+    imported.push(created);
+  }
+  return imported;
+}

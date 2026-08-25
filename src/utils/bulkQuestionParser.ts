@@ -4,15 +4,31 @@ import { fixMojibake, normalizeLatexMath } from './mathNormalizer';
 
 export interface ParsedQuestionItem {
   id?: string;
-  question_text: string;
-  options: {
+  item_type?: 'mcq' | 'written' | 'topic' | 'knowledge_snippet';
+  question_text?: string;
+  options?: {
     A: string;
     B: string;
     C: string;
     D: string;
   };
-  correct_ans: 'A' | 'B' | 'C' | 'D';
+  correct_ans?: 'A' | 'B' | 'C' | 'D';
   explanation?: string;
+
+  // Written question fields
+  answer_text?: string;
+  marks?: number;
+
+  // Topic fields
+  topic_code?: string;
+  name?: string;
+  bangla_name?: string;
+
+  // Knowledge snippet fields
+  title?: string;
+  content?: string;
+  importance?: 'low' | 'medium' | 'high' | 'top_priority';
+
   subject_id: QuestionSubject;
   subject_name?: string;
   paper?: '1st' | '2nd' | 1 | 2;
@@ -25,9 +41,15 @@ export interface ParsedQuestionItem {
   difficulty?: 'easy' | 'medium' | 'hard';
   star_rating?: 1 | 2 | 3;
   type?: 'mcq' | 'written';
-  // Validation status for UI preview
+
+  // Multi-level validation status for UI preview
+  status: 'valid' | 'warning' | 'invalid';
   isValid: boolean;
+  isWarning?: boolean;
   validationIssues?: string[];
+  warningIssues?: string[];
+  smartMapped?: boolean;
+  smartMappedNote?: string;
   rawSourceIndex?: number;
 }
 
@@ -108,14 +130,113 @@ export function normalizeSubjectId(sub: string | undefined, defaultSub: Question
 }
 
 /**
+ * Smart Name-to-ID Topic Mapper and Referential Integrity Checker
+ */
+export function smartMapTopicByName(
+  topicIdInput: string | undefined,
+  topicNameInput: string | undefined,
+  chapterIdInput: string | undefined,
+  subjectIdInput: string | undefined,
+  validTopics?: Array<{ id: string; name?: string; bangla_name?: string; chapter_id?: string; subject_id?: string }>
+): {
+  matchedTopicId: string | null;
+  matchedTopicName: string | null;
+  smartMapped: boolean;
+  smartMappedNote: string | null;
+  isInvalidId: boolean;
+} {
+  const cleanId = topicIdInput?.trim();
+  const cleanName = topicNameInput?.trim();
+
+  if (!validTopics || validTopics.length === 0) {
+    return {
+      matchedTopicId: cleanId || null,
+      matchedTopicName: cleanName || null,
+      smartMapped: false,
+      smartMappedNote: null,
+      isInvalidId: false,
+    };
+  }
+
+  // 1. Direct ID match check
+  if (cleanId) {
+    const directMatch = validTopics.find(
+      (t) => t.id === cleanId || t.id.toLowerCase() === cleanId.toLowerCase()
+    );
+    if (directMatch) {
+      return {
+        matchedTopicId: directMatch.id,
+        matchedTopicName: directMatch.name || directMatch.bangla_name || cleanName || null,
+        smartMapped: false,
+        smartMappedNote: null,
+        isInvalidId: false,
+      };
+    }
+  }
+
+  // 2. Smart Name Match check if topic_name exists
+  if (cleanName) {
+    const normalizedSearchName = cleanName.toLowerCase().replace(/[\s\-_,\.\:\(\)\[\]]+/g, '');
+
+    // Search among valid topics for chapter/subject first
+    let candidate = validTopics.find((t) => {
+      const tName = (t.name || t.bangla_name || '').toLowerCase().replace(/[\s\-_,\.\:\(\)\[\]]+/g, '');
+      const chapterMatch = !chapterIdInput || t.chapter_id === chapterIdInput;
+      return (
+        chapterMatch &&
+        tName.length > 0 &&
+        (tName === normalizedSearchName ||
+          tName.includes(normalizedSearchName) ||
+          normalizedSearchName.includes(tName))
+      );
+    });
+
+    // Fallback search across all topics in system
+    if (!candidate) {
+      candidate = validTopics.find((t) => {
+        const tName = (t.name || t.bangla_name || '').toLowerCase().replace(/[\s\-_,\.\:\(\)\[\]]+/g, '');
+        return (
+          tName.length > 2 &&
+          (tName === normalizedSearchName ||
+            tName.includes(normalizedSearchName) ||
+            normalizedSearchName.includes(tName))
+        );
+      });
+    }
+
+    if (candidate) {
+      return {
+        matchedTopicId: candidate.id,
+        matchedTopicName: candidate.name || candidate.bangla_name || candidate.id,
+        smartMapped: true,
+        smartMappedNote: `✨ '${cleanName}' থেকে স্বয়ংক্রিয়ভাবে '${candidate.id}' আইডি ম্যাপ করা হয়েছে`,
+        isInvalidId: false,
+      };
+    }
+  }
+
+  // 3. Provided topic_id was not found in DB & name could not be mapped
+  const isInvalidId = Boolean(cleanId);
+  return {
+    matchedTopicId: cleanId || null,
+    matchedTopicName: cleanName || null,
+    smartMapped: false,
+    smartMappedNote: null,
+    isInvalidId: isInvalidId,
+  };
+}
+
+/**
  * Validates and completes a single parsed question
  */
 export function validateAndEnrichQuestion(
   raw: Partial<ParsedQuestionItem>,
   index: number,
-  defaults?: BulkDefaults
+  defaults?: BulkDefaults,
+  dbTopics?: Array<{ id: string; name?: string; bangla_name?: string; chapter_id?: string; subject_id?: string }>
 ): ParsedQuestionItem {
   const issues: string[] = [];
+  const warnings: string[] = [];
 
   // Normalize LaTeX and fix any Mojibake in text fields
   const questionText = normalizeLatexMath(fixMojibake(raw.question_text || '')).trim();
@@ -157,8 +278,31 @@ export function validateAndEnrichQuestion(
   const difficulty = raw.difficulty || defaults?.difficulty || 'medium';
   const starRating = raw.star_rating || 3;
 
+  // Referential Validation & Smart Name Matching for topic_id
+  const topicIdRaw = raw.topic_id?.trim();
+  const topicNameRaw = fixMojibake(raw.topic_name || '').trim();
+
+  const mapResult = smartMapTopicByName(topicIdRaw, topicNameRaw, chapterId, subjectId, dbTopics);
+
+  let finalTopicId = mapResult.matchedTopicId || '';
+  let finalTopicName = mapResult.matchedTopicName || topicNameRaw;
+  let smartMapped = mapResult.smartMapped;
+  let smartMappedNote = mapResult.smartMappedNote;
+
+  if (mapResult.isInvalidId) {
+    warnings.push(`⚠️ Topic ID '${topicIdRaw}' ডাটাবেজে পাওয়া যায়নি (NULL হিসেবে সেভ হবে)`);
+  }
+
+  let status: 'valid' | 'warning' | 'invalid' = 'valid';
+  if (issues.length > 0) {
+    status = 'invalid';
+  } else if (warnings.length > 0) {
+    status = 'warning';
+  }
+
   return {
     id: raw.id || `q_${Date.now()}_${index}_${Math.random().toString(36).substring(2, 7)}`,
+    item_type: 'mcq',
     question_text: questionText,
     options: {
       A: optA,
@@ -173,15 +317,20 @@ export function validateAndEnrichQuestion(
     paper: paper,
     chapter_id: chapterId,
     chapter_name: chapterName,
-    topic_id: raw.topic_id || '',
-    topic_name: fixMojibake(raw.topic_name || '').trim(),
+    topic_id: finalTopicId,
+    topic_name: finalTopicName,
     category: raw.category || defaults?.category || 'varsity_a',
     tags: tags,
     difficulty: difficulty,
     star_rating: starRating,
     type: raw.type || 'mcq',
-    isValid: issues.length === 0,
+    status: status,
+    isValid: status !== 'invalid',
+    isWarning: status === 'warning',
     validationIssues: issues,
+    warningIssues: warnings,
+    smartMapped: smartMapped,
+    smartMappedNote: smartMappedNote || undefined,
     rawSourceIndex: index + 1,
   };
 }
@@ -704,6 +853,173 @@ export function downloadJsonTemplate() {
   const link = document.createElement('a');
   link.setAttribute('href', url);
   link.setAttribute('download', 'preptest_bulk_questions_template.json');
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
+
+/**
+ * Sample Written Questions Template Data
+ */
+export const SAMPLE_WRITTEN_TEMPLATE_DATA = [
+  {
+    question_text: 'একটি সমাতল দর্পণের ফোকাস দূরত্ব কত এবং কেন?',
+    answer_text: 'সমতল দর্পণের ফোকাস দূরত্ব অসীম (infinity)। কারণ সমতল দর্পণের পৃষ্ঠ সমতল হওয়ায় এর বক্রতার ব্যাসার্ধ r = ∞, তাই f = r/2 = ∞।',
+    subject_id: 'physics_2',
+    subject_name: 'Physics 2nd Paper',
+    chapter_id: 'phy2_ch6',
+    chapter_name: 'জ্যামিতিক আলোকবিজ্ঞান',
+    topic_id: 'phy2_ch6_t01',
+    topic_name: 'দর্পণ ও প্রতিফলন',
+    marks: 5,
+    tags: 'BUET 22-23, Written',
+    difficulty: 'medium'
+  },
+  {
+    question_text: 'বেনজিনের রেজোন্যান্স গঠন এঁকে ব্যাখ্যা করো।',
+    answer_text: 'বেনজিনে ৬টি কার্বন পরমাণু একক ও দ্বিবন্ধন দ্বারা পর্যায়ক্রমে যুক্ত থাকে। ৬টি পাই ইলেকট্রন ডিলোকালাইজড অবস্থায় পুরো রিং জুড়ে আবর্তিত হয়।',
+    subject_id: 'chemistry_2',
+    subject_name: 'Chemistry 2nd Paper',
+    chapter_id: 'chem2_ch2',
+    chapter_name: 'জৈব রসায়ন',
+    topic_id: 'chem2_ch2_t03',
+    topic_name: 'অ্যারোমেটিক যৌগ',
+    marks: 10,
+    tags: 'DU Written 21-22',
+    difficulty: 'hard'
+  }
+];
+
+export function downloadWrittenQuestionCsvTemplate() {
+  const ws = XLSX.utils.json_to_sheet(SAMPLE_WRITTEN_TEMPLATE_DATA);
+  const csvContent = XLSX.utils.sheet_to_csv(ws);
+  const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.setAttribute('href', url);
+  link.setAttribute('download', 'preptest_written_questions_template.csv');
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
+
+export function downloadWrittenQuestionJsonTemplate() {
+  const jsonString = JSON.stringify(SAMPLE_WRITTEN_TEMPLATE_DATA, null, 2);
+  const blob = new Blob([jsonString], { type: 'application/json;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.setAttribute('href', url);
+  link.setAttribute('download', 'preptest_written_questions_template.json');
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
+
+/**
+ * Sample Topics Template Data
+ */
+export const SAMPLE_TOPICS_TEMPLATE_DATA = [
+  {
+    id: 'bio2_ch1_t03',
+    name: 'প্রতিসাম্যতা ও সিলেম',
+    bangla_name: 'প্রতিসাম্যতা ও সিলেম',
+    chapter_id: 'bio2_ch1',
+    chapter_name: 'প্রাণীর শ্রেণিবিন্যাস',
+    subject_id: 'biology_2',
+    paper: '2nd',
+    star_rating: 3,
+    topic_code: 'b2c1_s3'
+  },
+  {
+    id: 'phy1_ch3_t02',
+    name: 'প্রক্ষেপক বা প্রজেক্টাইল',
+    bangla_name: 'প্রক্ষেপক বা প্রজেক্টাইল',
+    chapter_id: 'phy1_ch3',
+    chapter_name: 'গতিবিদ্যা',
+    subject_id: 'physics_1',
+    paper: '1st',
+    star_rating: 3,
+    topic_code: 'p1c3_s2'
+  }
+];
+
+export function downloadTopicCsvTemplate() {
+  const ws = XLSX.utils.json_to_sheet(SAMPLE_TOPICS_TEMPLATE_DATA);
+  const csvContent = XLSX.utils.sheet_to_csv(ws);
+  const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.setAttribute('href', url);
+  link.setAttribute('download', 'preptest_topics_template.csv');
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
+
+export function downloadTopicJsonTemplate() {
+  const jsonString = JSON.stringify(SAMPLE_TOPICS_TEMPLATE_DATA, null, 2);
+  const blob = new Blob([jsonString], { type: 'application/json;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.setAttribute('href', url);
+  link.setAttribute('download', 'preptest_topics_template.json');
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
+
+/**
+ * Sample Knowledge Snippets Template Data
+ */
+export const SAMPLE_KNOWLEDGE_SNIPPETS_TEMPLATE_DATA = [
+  {
+    title: 'সর্বাধিক শক্তিশালী হাইড্রোজেন বন্ধন',
+    content: 'ফ্লোরিনের উচ্চ তড়িৎ-ঋণাত্মকতার (4.0) কারণে HF-এ সবচেয়ে শক্তিশালী হাইড্রোজেন বন্ধন দেখা যায়।',
+    subject_id: 'chemistry_1',
+    chapter_id: 'chem1_ch3',
+    topic_id: 'chem1_ch3_t02',
+    importance: 'top_priority',
+    star_rating: 3,
+    tags: 'Chemical Bonding, Quick Revision'
+  },
+  {
+    title: 'প্রক্ষেপকের সর্বাধিক পাল্লা (Maximum Range)',
+    content: 'প্রক্ষেপণ কোণ θ = 45° হলে সর্বাধিক পাল্লা পাওয়া যায়, R_max = v0^2 / g। এ সময় সর্বাধিক উচ্চতা H = R_max / 4।',
+    subject_id: 'physics_1',
+    chapter_id: 'phy1_ch3',
+    topic_id: 'phy1_ch3_t02',
+    importance: 'high',
+    star_rating: 3,
+    tags: 'Dynamics, Projectile Formula'
+  }
+];
+
+export function downloadKnowledgeSnippetCsvTemplate() {
+  const ws = XLSX.utils.json_to_sheet(SAMPLE_KNOWLEDGE_SNIPPETS_TEMPLATE_DATA);
+  const csvContent = XLSX.utils.sheet_to_csv(ws);
+  const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.setAttribute('href', url);
+  link.setAttribute('download', 'preptest_knowledge_snippets_template.csv');
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
+
+export function downloadKnowledgeSnippetJsonTemplate() {
+  const jsonString = JSON.stringify(SAMPLE_KNOWLEDGE_SNIPPETS_TEMPLATE_DATA, null, 2);
+  const blob = new Blob([jsonString], { type: 'application/json;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.setAttribute('href', url);
+  link.setAttribute('download', 'preptest_knowledge_snippets_template.json');
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);

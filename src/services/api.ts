@@ -824,6 +824,63 @@ export async function bulkImportQuestionsApi(questionsData: any): Promise<BulkIm
   return resData;
 }
 
+export async function bulkImportWrittenQuestionsApi(data: any): Promise<BulkImportResponse> {
+  const response = await fetchWithRetry(getApiUrl('/api/admin/written-questions/bulk-import'), {
+    method: 'POST',
+    headers: getAdminAuthHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify(data),
+  });
+
+  const resData = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    const errorObj: any = new Error(resData.error || 'Failed to bulk import written questions');
+    errorObj.details = resData.details;
+    errorObj.status = response.status;
+    throw errorObj;
+  }
+
+  return resData;
+}
+
+export async function bulkImportTopicsApi(data: any): Promise<BulkImportResponse> {
+  const response = await fetchWithRetry(getApiUrl('/api/admin/topics/bulk-import'), {
+    method: 'POST',
+    headers: getAdminAuthHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify(data),
+  });
+
+  const resData = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    const errorObj: any = new Error(resData.error || 'Failed to bulk import topics');
+    errorObj.details = resData.details;
+    errorObj.status = response.status;
+    throw errorObj;
+  }
+
+  return resData;
+}
+
+export async function bulkImportKnowledgeSnippetsApi(data: any): Promise<BulkImportResponse> {
+  const response = await fetchWithRetry(getApiUrl('/api/admin/knowledge-snippets/bulk-import'), {
+    method: 'POST',
+    headers: getAdminAuthHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify(data),
+  });
+
+  const resData = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    const errorObj: any = new Error(resData.error || 'Failed to bulk import knowledge snippets');
+    errorObj.details = resData.details;
+    errorObj.status = response.status;
+    throw errorObj;
+  }
+
+  return resData;
+}
+
 // ---------------- SQLite Topic API Operations ----------------
 
 export async function fetchTopics(filters?: {
