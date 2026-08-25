@@ -27,7 +27,19 @@
   color-scheme: dark;
 }
 
+html {
+  width: 100%;
+  max-width: 100vw;
+  overflow-x: hidden;
+  position: relative;
+  -webkit-text-size-adjust: 100%;
+}
+
 body {
+  width: 100%;
+  max-width: 100vw;
+  overflow-x: hidden;
+  position: relative;
   background-color: var(--bg);
   color: var(--text);
   font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Hind Siliguri', sans-serif;
@@ -36,6 +48,16 @@ body {
   -webkit-touch-callout: none;
   -webkit-user-select: none;
   user-select: none;
+}
+
+#root {
+  width: 100%;
+  max-width: 100vw;
+  overflow-x: hidden;
+  position: relative;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
 }
 
 /* Disable selection globally by default */
@@ -203,9 +225,36 @@ textarea::placeholder {
 }
 
 /* KaTeX Dark Mode Typography & Math Token Color Inheritance */
+.markdown-math-content {
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+.katex-display {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+  padding: 4px 0;
+  margin: 0.5em 0;
+}
+
+.katex-display::-webkit-scrollbar {
+  height: 4px;
+}
+.katex-display::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.4);
+  border-radius: 4px;
+}
+
 .katex {
   color: inherit;
   font-size: 1.05em;
+  max-width: 100%;
 }
 
 .dark,

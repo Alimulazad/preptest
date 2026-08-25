@@ -284,7 +284,7 @@ export function App() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-100/70 dark:bg-slate-950 text-slate-900 dark:text-slate-100 font-sans flex flex-col selection:bg-emerald-500 selection:text-white transition-colors duration-200">
+    <div className="min-h-screen w-full max-w-full overflow-x-hidden bg-slate-100/70 dark:bg-slate-950 text-slate-900 dark:text-slate-100 font-sans flex flex-col selection:bg-emerald-500 selection:text-white transition-colors duration-200">
       {/* Top Header Navbar */}
       {!(currentTab === 'exam' && isExamFlowActive) && (
         <Navbar
@@ -320,15 +320,15 @@ export function App() {
       />
 
       {/* Main View Area with Animated Route Transitions */}
-      <main className={`grow max-w-4xl w-full mx-auto ${currentTab === 'exam' && isExamFlowActive ? 'p-0 max-w-full' : 'px-3 sm:px-4 pt-4'}`}>
+      <main className={`grow max-w-4xl w-full min-w-0 mx-auto overflow-x-hidden ${currentTab === 'exam' && isExamFlowActive ? 'p-0 max-w-full' : 'px-3 sm:px-4 pt-4'}`}>
         <AnimatePresence mode="wait">
           <motion.div
             key={location.pathname}
-            initial={{ opacity: 0, y: 8 }}
+            initial={{ opacity: 0, y: 4 }}
             animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -8 }}
-            transition={{ duration: 0.2, ease: 'easeOut' }}
-            className="w-full h-full pb-20 sm:pb-24"
+            exit={{ opacity: 0, y: -4 }}
+            transition={{ duration: 0.15, ease: 'easeOut' }}
+            className="w-full min-w-0 h-full pb-20 sm:pb-24 overflow-x-hidden"
           >
             <Suspense fallback={<ScreenSkeletonLoader />}>
               <Routes location={location}>

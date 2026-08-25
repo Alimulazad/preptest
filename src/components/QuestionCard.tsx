@@ -115,14 +115,14 @@ const QuestionCardComponent: React.FC<QuestionCardProps> = ({
   return (
     <div
       id={`question-card-${question.id}`}
-      className="bg-white dark:bg-slate-800 rounded-2xl p-4 sm:p-5 border border-slate-200/90 dark:border-slate-700 shadow-2xs mb-4 transition-colors duration-150 relative"
+      className="bg-white dark:bg-slate-800 rounded-2xl p-4 sm:p-5 border border-slate-200/90 dark:border-slate-700 shadow-2xs mb-4 transition-colors duration-150 relative w-full max-w-full overflow-hidden min-w-0"
     >
       {/* Question Header: Number & Text */}
-      <div className="flex items-start gap-2 mb-3.5">
+      <div className="flex items-start gap-2 mb-3.5 w-full min-w-0">
         <span className="font-bold text-slate-900 dark:text-slate-100 text-sm sm:text-base leading-snug shrink-0 font-mono">
           {index + 1}.
         </span>
-        <div className="text-slate-900 dark:text-slate-100 font-medium text-sm sm:text-[15px] leading-relaxed grow">
+        <div className="text-slate-900 dark:text-slate-100 font-medium text-sm sm:text-[15px] leading-relaxed grow min-w-0 max-w-full overflow-x-auto">
           <MathText text={question.question_text} />
 
           {question.math_formula_latex && (

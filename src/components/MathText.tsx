@@ -182,7 +182,7 @@ const MathTextComponent: React.FC<MathTextProps> = ({ text, className = '', inli
   }
 
   return (
-    <div className={`markdown-math-content leading-relaxed text-inherit space-y-2.5 ${className}`}>
+    <div className={`markdown-math-content max-w-full min-w-0 overflow-x-auto leading-relaxed text-inherit space-y-2.5 ${className}`}>
       {blocks.map((block, idx) => {
         if (block.type === 'tikz') {
           return <TikzRenderer key={idx} code={block.content} />;
