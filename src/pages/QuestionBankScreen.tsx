@@ -191,18 +191,25 @@ export const QuestionBankScreen: React.FC<QuestionBankScreenProps> = ({
       : fetchedWrittenQuestions;
   }, [propWrittenQuestions, fetchedWrittenQuestions]);
 
-  // Trigger glowing skeleton and reset visible limit whenever category/chapter/filter changes
+  // Clean skeleton trigger for smooth transitions
+  const filterTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  const triggerFilterTransition = (callback: () => void, durationMs = 280) => {
+    if (filterTimerRef.current) clearTimeout(filterTimerRef.current);
+    setIsFilterChanging(true);
+    setVisibleLimit(15);
+    setIsLoadingMore(false);
+    callback();
+    filterTimerRef.current = setTimeout(() => {
+      setIsFilterChanging(false);
+    }, durationMs);
+  };
+
   useEffect(() => {
-    if (selectedSubject && selectedCategory) {
-      setIsFilterChanging(true);
-      setVisibleLimit(15);
-      setIsLoadingMore(false);
-      const timer = setTimeout(() => {
-        setIsFilterChanging(false);
-      }, 260);
-      return () => clearTimeout(timer);
-    }
-  }, [selectedSubject?.id, selectedCategory, selectedChapter, selectedTopicId, questionTypeFilter, searchQuery]);
+    return () => {
+      if (filterTimerRef.current) clearTimeout(filterTimerRef.current);
+    };
+  }, []);
 
   // Filtered Subjects for Level 1
   const filteredSubjects = useMemo(() => {
@@ -390,15 +397,19 @@ export const QuestionBankScreen: React.FC<QuestionBankScreenProps> = ({
   }, [allWrittenQuestions, selectedSubject, selectedCategory, selectedChapter, selectedTopicId, searchQuery]);
   // Handlers for Chapter & Topic Selection
   const handleSelectChapter = (ch: Chapter) => {
-    setSelectedChapter(ch);
-    setSelectedTopicId(null);
-    setIsDrilledIntoTopics(true);
+    triggerFilterTransition(() => {
+      setSelectedChapter(ch);
+      setSelectedTopicId(null);
+      setIsDrilledIntoTopics(true);
+    }, 240);
   };
 
   const handleSelectAllChapters = () => {
-    setSelectedChapter('all');
-    setSelectedTopicId(null);
-    setIsDrilledIntoTopics(false);
+    triggerFilterTransition(() => {
+      setSelectedChapter('all');
+      setSelectedTopicId(null);
+      setIsDrilledIntoTopics(false);
+    }, 240);
   };
 
   const handleBackToChapters = () => {
@@ -406,7 +417,22 @@ export const QuestionBankScreen: React.FC<QuestionBankScreenProps> = ({
   };
 
   const handleSelectTopic = (topicId: string | null) => {
-    setSelectedTopicId(topicId);
+    triggerFilterTransition(() => {
+      setSelectedTopicId(topicId);
+    }, 240);
+  };
+
+  const handleSelectCategory = (catId: ExamCategory) => {
+    triggerFilterTransition(() => {
+      setSelectedCategory(catId);
+    }, 280);
+  };
+
+  const handleToggleQuestionType = (type: 'mcq' | 'written') => {
+    if (type === questionTypeFilter) return;
+    triggerFilterTransition(() => {
+      setQuestionTypeFilter(type);
+    }, 260);
   };
 
   // IntersectionObserver for continuous Infinite Scrolling with Bottom Circular Spinner
@@ -679,7 +705,7 @@ export const QuestionBankScreen: React.FC<QuestionBankScreenProps> = ({
                 type="radio"
                 name="qtype_bottom"
                 checked={questionTypeFilter === 'mcq'}
-                onChange={() => setQuestionTypeFilter('mcq')}
+                onChange={() => handleToggleQuestionType('mcq')}
                 className="text-[#2563EB] focus:ring-[#2563EB] cursor-pointer"
               />
               <span>MCQ</span>
@@ -689,7 +715,7 @@ export const QuestionBankScreen: React.FC<QuestionBankScreenProps> = ({
                 type="radio"
                 name="qtype_bottom"
                 checked={questionTypeFilter === 'written'}
-                onChange={() => setQuestionTypeFilter('written')}
+                onChange={() => handleToggleQuestionType('written')}
                 className="text-[#2563EB] focus:ring-[#2563EB] cursor-pointer"
               />
               <span>Written</span>
@@ -728,7 +754,7 @@ export const QuestionBankScreen: React.FC<QuestionBankScreenProps> = ({
             return (
               <button
                 key={cat.id}
-                onClick={() => setSelectedCategory(cat.id)}
+                onClick={() => handleSelectCategory(cat.id)}
                 className={`relative overflow-hidden rounded-2xl p-4 sm:p-5 text-white flex flex-col justify-between h-40 sm:h-44 shadow-sm hover:shadow-md transition-all text-left cursor-pointer active:scale-95 group border border-black/10 bg-gradient-to-br ${cat.gradient}`}
               >
                 {/* Top Category Label */}
