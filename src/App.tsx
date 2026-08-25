@@ -34,11 +34,10 @@ import { useNetwork } from './context/NetworkContext';
 
 
 
-// Code-split heavy routes to optimize initial bundle size & load performance
-const QuestionBankScreen = lazy(() => import('./pages/QuestionBankScreen'));
-const ExamScreen = lazy(() => import('./pages/ExamScreen'));
-const HistoryScreen = lazy(() => import('./pages/HistoryScreen'));
-const ProgressScreen = lazy(() => import('./pages/ProgressScreen'));
+import QuestionBankScreen from './pages/QuestionBankScreen';
+import ExamScreen from './pages/ExamScreen';
+import HistoryScreen from './pages/HistoryScreen';
+import ProgressScreen from './pages/ProgressScreen';
 import {
   Settings as SettingsIcon,
   X,

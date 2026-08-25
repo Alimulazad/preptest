@@ -3,6 +3,7 @@ import { ChevronDown, ChevronUp, Bookmark, Flag, Eye, EyeOff, Sparkles, CheckCir
 import { Question } from '../types';
 import MathText from './MathText';
 import { reportQuestionApi } from '../services/api';
+import { OptimizedImage } from './common/OptimizedImage';
 
 export interface QuestionCardProps {
   question: Question;
@@ -133,12 +134,13 @@ const QuestionCardComponent: React.FC<QuestionCardProps> = ({
 
           {question.question_image_url && (
             <div className="mt-3 overflow-hidden rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-900/50 p-1">
-              <img
+              <OptimizedImage
                 src={question.question_image_url}
                 alt="Question Diagram"
-                referrerPolicy="no-referrer"
+                maxWidth={800}
+                showPreviewOnClick={true}
                 className="max-h-64 sm:max-h-80 w-auto max-w-full rounded-lg object-contain mx-auto"
-                loading="lazy"
+                containerClassName="flex items-center justify-center min-h-[140px]"
               />
             </div>
           )}
@@ -206,7 +208,7 @@ const QuestionCardComponent: React.FC<QuestionCardProps> = ({
       </div>
 
       {/* Collapsible "ব্যাখ্যা" Panel */}
-      {(question.explanation || question.explanation_latex || question.explanation_image_url) && (
+      {(question.explanation || question.explanation_latex || question.explanation_image_url || (question.explanation_image_urls && question.explanation_image_urls.length > 0)) && (
         <div className="mb-3">
           <div className="rounded-2xl bg-[#DCFCE7]/70 dark:bg-emerald-950/30 border border-emerald-200/70 dark:border-emerald-800/60 overflow-hidden transition-colors duration-150">
             {/* Header: "ব্যাখ্যা" on left, Chevron on right */}
@@ -243,13 +245,31 @@ const QuestionCardComponent: React.FC<QuestionCardProps> = ({
 
                 {question.explanation_image_url && (
                   <div className="pt-1 overflow-hidden rounded-xl border border-emerald-300/60 dark:border-emerald-800/60 bg-white/80 dark:bg-slate-900/80 p-1">
-                    <img
+                    <OptimizedImage
                       src={question.explanation_image_url}
                       alt="Explanation Diagram"
-                      referrerPolicy="no-referrer"
+                      maxWidth={800}
+                      showPreviewOnClick={true}
                       className="max-h-56 sm:max-h-72 w-auto max-w-full rounded-lg object-contain mx-auto"
-                      loading="lazy"
+                      containerClassName="flex items-center justify-center min-h-[120px]"
                     />
+                  </div>
+                )}
+
+                {question.explanation_image_urls && question.explanation_image_urls.length > 0 && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+                    {question.explanation_image_urls.map((url, idx) => (
+                      <div key={idx} className="overflow-hidden rounded-xl border border-emerald-300/60 dark:border-emerald-800/60 bg-white/80 dark:bg-slate-900/80 p-1">
+                        <OptimizedImage
+                          src={url}
+                          alt={`Explanation Diagram ${idx + 1}`}
+                          maxWidth={800}
+                          showPreviewOnClick={true}
+                          className="max-h-56 sm:max-h-72 w-auto max-w-full rounded-lg object-contain mx-auto"
+                          containerClassName="flex items-center justify-center min-h-[120px]"
+                        />
+                      </div>
+                    ))}
                   </div>
                 )}
               </div>

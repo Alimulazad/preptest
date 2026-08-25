@@ -27,10 +27,12 @@ import {
   Eye,
   EyeOff
 } from 'lucide-react';
-import { SubjectInfo, Question, WrittenQuestion, ExamCategory, QuestionSubject, Chapter } from '../types';
+import { SubjectInfo, Question, WrittenQuestion, ExamCategory, QuestionSubject, Chapter, QuestionsPaginatedResponse, WrittenQuestionsPaginatedResponse } from '../types';
 import { SUBJECTS_DATA, UNIVERSITIES_DATA, CHAPTERS_DATA } from '../data/admissionData';
 import { COMPREHENSIVE_CHAPTERS_DATA } from '../data/subjectTopicsData';
 import { INITIAL_WRITTEN_QUESTIONS } from '../data/writtenQuestionsData';
+import { useInfiniteQuestions } from '../hooks/useQuestions';
+import { useInfiniteWrittenQuestions } from '../hooks/useWrittenQuestions';
 import QuestionCard from '../components/QuestionCard';
 import WrittenQuestionCard from '../components/WrittenQuestionCard';
 import EmptyState from '../components/common/EmptyState';
@@ -165,7 +167,6 @@ export const QuestionBankScreen: React.FC<QuestionBankScreenProps> = ({
   const [selectedChapter, setSelectedChapter] = useState<Chapter | 'all' | null>(null);
   const [selectedTopicId, setSelectedTopicId] = useState<string | null>(null);
   const [isDrilledIntoTopics, setIsDrilledIntoTopics] = useState<boolean>(false);
-  const [isFilterChanging, setIsFilterChanging] = useState<boolean>(false);
   const [questionTypeFilter, setQuestionTypeFilter] = useState<'all' | 'mcq' | 'written'>('mcq');
   const [showAllAnswers, setShowAllAnswers] = useState<boolean>(false);
   const [visibleLimit, setVisibleLimit] = useState<number>(15);
@@ -190,26 +191,6 @@ export const QuestionBankScreen: React.FC<QuestionBankScreenProps> = ({
       ? propWrittenQuestions
       : fetchedWrittenQuestions;
   }, [propWrittenQuestions, fetchedWrittenQuestions]);
-
-  // Clean skeleton trigger for smooth transitions
-  const filterTimerRef = useRef<NodeJS.Timeout | null>(null);
-
-  const triggerFilterTransition = (callback: () => void, durationMs = 280) => {
-    if (filterTimerRef.current) clearTimeout(filterTimerRef.current);
-    setIsFilterChanging(true);
-    setVisibleLimit(15);
-    setIsLoadingMore(false);
-    callback();
-    filterTimerRef.current = setTimeout(() => {
-      setIsFilterChanging(false);
-    }, durationMs);
-  };
-
-  useEffect(() => {
-    return () => {
-      if (filterTimerRef.current) clearTimeout(filterTimerRef.current);
-    };
-  }, []);
 
   // Filtered Subjects for Level 1
   const filteredSubjects = useMemo(() => {
@@ -395,21 +376,103 @@ export const QuestionBankScreen: React.FC<QuestionBankScreenProps> = ({
 
     return list;
   }, [allWrittenQuestions, selectedSubject, selectedCategory, selectedChapter, selectedTopicId, searchQuery]);
-  // Handlers for Chapter & Topic Selection
+  // ==========================================
+  // SERVER-DRIVEN TANSTACK REACT QUERY HOOKS
+  // ==========================================
+  const isWrittenMode = questionTypeFilter === 'written';
+
+  const mcqFilters = useMemo(() => ({
+    subject_id: selectedSubject?.id,
+    category: selectedCategory || undefined,
+    chapter_id: selectedChapter && selectedChapter !== 'all' ? selectedChapter.id : undefined,
+    topic_id: selectedTopicId || undefined,
+    search: searchQuery.trim() || undefined,
+    type: questionTypeFilter !== 'all' ? questionTypeFilter : undefined,
+  }), [selectedSubject, selectedCategory, selectedChapter, selectedTopicId, searchQuery, questionTypeFilter]);
+
+  const writtenFilters = useMemo(() => ({
+    subject_id: selectedSubject?.id,
+    category: selectedCategory || undefined,
+    chapter_id: selectedChapter && selectedChapter !== 'all' ? selectedChapter.id : undefined,
+    topic_id: selectedTopicId || undefined,
+    search: searchQuery.trim() || undefined,
+  }), [selectedSubject, selectedCategory, selectedChapter, selectedTopicId, searchQuery]);
+
+  const {
+    data: mcqData,
+    isLoading: isMcqLoading,
+    isFetching: isMcqFetching,
+    fetchNextPage: fetchNextMcqPage,
+    hasNextPage: hasNextMcqPage,
+    isFetchingNextPage: isFetchingNextMcqPage,
+  } = useInfiniteQuestions(mcqFilters, 15, {
+    enabled: Boolean(selectedSubject && selectedCategory && !isWrittenMode),
+  });
+
+  const {
+    data: writtenData,
+    isLoading: isWrittenLoading,
+    isFetching: isWrittenFetching,
+    fetchNextPage: fetchNextWrittenPage,
+    hasNextPage: hasNextWrittenPage,
+    isFetchingNextPage: isFetchingNextWrittenPage,
+  } = useInfiniteWrittenQuestions(writtenFilters, 15, {
+    enabled: Boolean(selectedSubject && selectedCategory && isWrittenMode),
+  });
+
+  // Extract server-fetched items with deduplication by ID
+  const serverMcqQuestions = useMemo(() => {
+    const pages = (mcqData as any)?.pages as QuestionsPaginatedResponse[] | undefined;
+    if (!pages) return [];
+    const all = pages.flatMap((page) => page.questions || []);
+    const seen = new Set<string>();
+    return all.filter((q) => {
+      const id = q.id || `temp-${Math.random()}`;
+      if (seen.has(id)) return false;
+      seen.add(id);
+      return true;
+    });
+  }, [mcqData]);
+
+  const serverWrittenQuestions = useMemo(() => {
+    const pages = (writtenData as any)?.pages as WrittenQuestionsPaginatedResponse[] | undefined;
+    if (!pages) return [];
+    const all = pages.flatMap((page) => page.questions || []);
+    const seen = new Set<string>();
+    return all.filter((wq) => {
+      const id = wq.id || `temp-${Math.random()}`;
+      if (seen.has(id)) return false;
+      seen.add(id);
+      return true;
+    });
+  }, [writtenData]);
+
+  // Combine server data with client-side fallback if server returns empty/offline
+  const activeMcqQuestions = useMemo(() => {
+    if (serverMcqQuestions.length > 0) return serverMcqQuestions;
+    return currentQuestions;
+  }, [serverMcqQuestions, currentQuestions]);
+
+  const activeWrittenQuestions = useMemo(() => {
+    if (serverWrittenQuestions.length > 0) return serverWrittenQuestions;
+    return currentWrittenQuestions;
+  }, [serverWrittenQuestions, currentWrittenQuestions]);
+
+  // Server-driven loading state for Dynamic Skeleton Transition
+  const isServerLoading = isWrittenMode
+    ? (isWrittenLoading || (isWrittenFetching && !isFetchingNextWrittenPage))
+    : (isMcqLoading || (isMcqFetching && !isFetchingNextMcqPage));
+
   const handleSelectChapter = (ch: Chapter) => {
-    triggerFilterTransition(() => {
-      setSelectedChapter(ch);
-      setSelectedTopicId(null);
-      setIsDrilledIntoTopics(true);
-    }, 240);
+    setSelectedChapter(ch);
+    setSelectedTopicId(null);
+    setIsDrilledIntoTopics(true);
   };
 
   const handleSelectAllChapters = () => {
-    triggerFilterTransition(() => {
-      setSelectedChapter('all');
-      setSelectedTopicId(null);
-      setIsDrilledIntoTopics(false);
-    }, 240);
+    setSelectedChapter('all');
+    setSelectedTopicId(null);
+    setIsDrilledIntoTopics(false);
   };
 
   const handleBackToChapters = () => {
@@ -417,40 +480,39 @@ export const QuestionBankScreen: React.FC<QuestionBankScreenProps> = ({
   };
 
   const handleSelectTopic = (topicId: string | null) => {
-    triggerFilterTransition(() => {
-      setSelectedTopicId(topicId);
-    }, 240);
+    setSelectedTopicId(topicId);
   };
 
   const handleSelectCategory = (catId: ExamCategory) => {
-    triggerFilterTransition(() => {
-      setSelectedCategory(catId);
-    }, 280);
+    setSelectedCategory(catId);
+    setSelectedChapter(null);
+    setSelectedTopicId(null);
+    setIsDrilledIntoTopics(false);
   };
 
   const handleToggleQuestionType = (type: 'mcq' | 'written') => {
     if (type === questionTypeFilter) return;
-    triggerFilterTransition(() => {
-      setQuestionTypeFilter(type);
-    }, 260);
+    setQuestionTypeFilter(type);
   };
 
-  // IntersectionObserver for continuous Infinite Scrolling with Bottom Circular Spinner
+  // IntersectionObserver for Server-Driven Infinite Scrolling
   useEffect(() => {
-    if (isFilterChanging || isLoading) return;
-    const isWrittenMode = questionTypeFilter === 'written';
-    const activeList = isWrittenMode ? currentWrittenQuestions : currentQuestions;
-    if (visibleLimit >= activeList.length) return;
+    if (isLoading || isServerLoading) return;
+    const isWritten = questionTypeFilter === 'written';
+    const hasNext = isWritten ? hasNextWrittenPage : hasNextMcqPage;
+    const isFetchingNext = isWritten ? isFetchingNextWrittenPage : isFetchingNextMcqPage;
+
+    if (!hasNext || isFetchingNext) return;
 
     const observer = new IntersectionObserver(
       (entries) => {
         const first = entries[0];
-        if (first.isIntersecting && !isLoadingMore && visibleLimit < activeList.length) {
-          setIsLoadingMore(true);
-          setTimeout(() => {
-            setVisibleLimit((prev) => Math.min(prev + 15, activeList.length));
-            setIsLoadingMore(false);
-          }, 280);
+        if (first.isIntersecting && hasNext && !isFetchingNext) {
+          if (isWritten) {
+            fetchNextWrittenPage();
+          } else {
+            fetchNextMcqPage();
+          }
         }
       },
       { threshold: 0.1, rootMargin: '200px' }
@@ -464,7 +526,17 @@ export const QuestionBankScreen: React.FC<QuestionBankScreenProps> = ({
     return () => {
       if (currentTrigger) observer.unobserve(currentTrigger);
     };
-  }, [visibleLimit, currentQuestions.length, currentWrittenQuestions.length, questionTypeFilter, isLoadingMore, isFilterChanging, isLoading]);
+  }, [
+    isLoading,
+    isServerLoading,
+    questionTypeFilter,
+    hasNextMcqPage,
+    hasNextWrittenPage,
+    isFetchingNextMcqPage,
+    isFetchingNextWrittenPage,
+    fetchNextMcqPage,
+    fetchNextWrittenPage,
+  ]);
 
   // Render subject icon helper
   const renderSubjectArt = (sub: SubjectInfo) => {
@@ -485,9 +557,9 @@ export const QuestionBankScreen: React.FC<QuestionBankScreenProps> = ({
     const activeCategoryInfo = CATEGORY_CARDS_CONFIG.find((c) => c.id === selectedCategory);
     const activeCategoryLabel = activeCategoryInfo ? activeCategoryInfo.label : selectedCategory;
 
-    const isWrittenMode = questionTypeFilter === 'written';
-    const activeList = isWrittenMode ? currentWrittenQuestions : currentQuestions;
-    const displayedItems = activeList.slice(0, visibleLimit);
+    const activeList = isWrittenMode ? activeWrittenQuestions : activeMcqQuestions;
+    const isFetchingNext = isWrittenMode ? isFetchingNextWrittenPage : isFetchingNextMcqPage;
+    const hasNext = isWrittenMode ? hasNextWrittenPage : hasNextMcqPage;
 
     return (
       <div className="space-y-4 pb-36 max-w-2xl mx-auto px-1 sm:px-2">
@@ -543,17 +615,17 @@ export const QuestionBankScreen: React.FC<QuestionBankScreenProps> = ({
           </div>
         </div>
 
-        {/* Questions List with Glowing Skeleton Shimmer & Infinite Scrolling */}
-        {isLoading || isFilterChanging ? (
+        {/* Questions List with Dynamic Server Skeleton Transition & Infinite Scrolling */}
+        {(isLoading || isServerLoading) ? (
           <div className="space-y-4 pt-1" id="question-bank-skeleton-loading">
             <QuestionListSkeleton count={4} />
           </div>
-        ) : displayedItems.length > 0 ? (
+        ) : activeList.length > 0 ? (
           <div className="space-y-4 pt-1">
             {isWrittenMode ? (
-              (displayedItems as WrittenQuestion[]).map((wq, idx) => (
+              (activeList as WrittenQuestion[]).map((wq, idx) => (
                 <WrittenQuestionCard
-                  key={wq.id}
+                  key={`${wq.id || 'wq'}-${idx}`}
                   question={wq}
                   index={idx}
                   forceShowAnswer={showAllAnswers}
@@ -563,9 +635,9 @@ export const QuestionBankScreen: React.FC<QuestionBankScreenProps> = ({
                 />
               ))
             ) : (
-              (displayedItems as Question[]).map((q, idx) => (
+              (activeList as Question[]).map((q, idx) => (
                 <QuestionCard
-                  key={q.id}
+                  key={`${q.id || 'q'}-${idx}`}
                   question={q}
                   index={idx}
                   mode="practice"
@@ -577,18 +649,20 @@ export const QuestionBankScreen: React.FC<QuestionBankScreenProps> = ({
               ))
             )}
 
-            {/* Bottom Sentinel and Green Circular Spinner matching Screenshot 2, 3 & Video */}
-            {visibleLimit < activeList.length && (
+            {/* Bottom Sentinel and Green Circular Spinner during server infinite fetch */}
+            {hasNext && (
               <div
                 ref={loadMoreTriggerRef}
                 className="py-5 flex flex-col items-center justify-center gap-2"
               >
-                <div className="w-7 h-7 rounded-full border-3 border-emerald-500/20 border-t-emerald-600 dark:border-t-emerald-400 animate-spin" />
+                {isFetchingNext && (
+                  <div className="w-7 h-7 rounded-full border-3 border-emerald-500/20 border-t-emerald-600 dark:border-t-emerald-400 animate-spin" />
+                )}
               </div>
             )}
 
-            {/* Subtle end of questions banner */}
-            {visibleLimit >= activeList.length && activeList.length > 0 && (
+            {/* End of questions banner */}
+            {!hasNext && activeList.length > 0 && (
               <div className="text-center py-6 text-xs text-slate-400 dark:text-slate-500 font-medium">
                 — সকল প্রশ্ন দেখানো হয়েছে ({toBengaliNumber(activeList.length)} টি) —
               </div>

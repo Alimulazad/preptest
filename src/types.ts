@@ -12,6 +12,7 @@ export interface WrittenQuestion {
   question_image_url?: string;
   explanation: string;
   explanation_latex?: string;
+  explanation_image_url?: string;
   explanation_image_urls?: string[];
   tags: string[]; // e.g. ["KhU B 25-26", "DU A 24-25"]
   category?: ExamCategory | string;
@@ -138,6 +139,7 @@ export interface Question {
   explanation_latex?: string;
   question_image_url?: string;
   explanation_image_url?: string;
+  explanation_image_urls?: string[];
   tags: string[]; // e.g. ["BUP FST 24-25", "DU 'Ka' 22-23", "HSC"]
   star_rating: 1 | 2 | 3;
   type: 'mcq' | 'written';

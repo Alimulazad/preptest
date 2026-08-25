@@ -163,7 +163,7 @@ export const VirtualizedQuestionList: React.FC<VirtualizedQuestionListProps> = (
             const writtenQ = item as WrittenQuestion;
             return (
               <WrittenQuestionCard
-                key={writtenQ.id}
+                key={`${writtenQ.id || 'wq'}-${idx}`}
                 question={writtenQ}
                 index={idx}
                 isBookmarked={bookmarkSet.has(writtenQ.id)}
@@ -177,7 +177,7 @@ export const VirtualizedQuestionList: React.FC<VirtualizedQuestionListProps> = (
           const mcqQ = item as Question;
           return (
             <QuestionCard
-              key={mcqQ.id}
+              key={`${mcqQ.id || 'q'}-${idx}`}
               question={mcqQ}
               index={idx}
               mode={mode}

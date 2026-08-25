@@ -194,6 +194,39 @@ export const migrations: Migration[] = [
       `);
     },
   },
+  {
+    id: '005_optimize_database_indexes',
+    name: 'Add compound filter indexes and GIN tags index for fast cursor pagination and filtering',
+    up: async (client: pg.PoolClient) => {
+      await client.query(`
+        -- Ensure is_active exists on questions table
+        ALTER TABLE questions ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE;
+
+        -- Create compound index for written questions filter
+        CREATE INDEX IF NOT EXISTS idx_written_filter ON written_questions (subject_id, chapter_id, is_active);
+
+        -- Create compound index for mcq questions filter
+        CREATE INDEX IF NOT EXISTS idx_mcq_filter ON questions (subject_id, chapter_id, type, is_active);
+
+        -- Install pg_trgm extension for GIN index on text/tags if available
+        CREATE EXTENSION IF NOT EXISTS pg_trgm;
+
+        -- Create GIN index on written_questions tags
+        DO $$
+        BEGIN
+          BEGIN
+            CREATE INDEX IF NOT EXISTS idx_written_tags ON written_questions USING GIN(tags gin_trgm_ops);
+          EXCEPTION WHEN OTHERS THEN
+            BEGIN
+              CREATE INDEX IF NOT EXISTS idx_written_tags ON written_questions USING GIN(to_tsvector('simple', tags));
+            EXCEPTION WHEN OTHERS THEN
+              NULL;
+            END;
+          END;
+        END $$;
+      `);
+    },
+  },
 ];
 
 export async function runMigrations(pool: pg.Pool): Promise<void> {

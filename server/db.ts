@@ -892,6 +892,7 @@ export function formatRowToQuestion(row: any): Question {
 }
 
 export interface PaginatedQuestionsResult {
+  data: Question[];
   questions: Question[];
   total: number;
   nextCursor?: string | null;
@@ -908,9 +909,18 @@ export function decodeCursor(cursorStr?: string): { created_at?: number; id?: st
     const parsed = JSON.parse(raw);
     if (parsed && (parsed.id || parsed.created_at)) return parsed;
   } catch {
+    // If cursorStr is a timestamp number
+    const num = Number(cursorStr);
+    if (!isNaN(num) && num > 1000000) {
+      return { created_at: num };
+    }
     return { id: cursorStr };
   }
-  return null;
+  const num = Number(cursorStr);
+  if (!isNaN(num) && num > 1000000) {
+    return { created_at: num };
+  }
+  return { id: cursorStr };
 }
 
 export function encodeCursor(created_at?: number, id?: string): string | null {
@@ -922,10 +932,12 @@ export async function getAllQuestions(filters?: {
   subject_id?: string;
   chapter_id?: string;
   topic_id?: string;
+  type?: string;
   paper?: string;
   tag?: string;
   search?: string;
   category?: string;
+  difficulty?: string;
   cursor?: string;
   page?: number;
   limit?: number;
@@ -936,7 +948,7 @@ export async function getAllQuestions(filters?: {
   const isCursorMode = Boolean(filters?.cursor !== undefined && !filters?.page);
 
   try {
-    let whereClause = ' WHERE 1=1';
+    let whereClause = ' WHERE (is_active IS NULL OR is_active = TRUE)';
     const params: any[] = [];
     let pIdx = 1;
 
@@ -952,6 +964,10 @@ export async function getAllQuestions(filters?: {
       whereClause += ` AND topic_id = $${pIdx++}`;
       params.push(filters.topic_id);
     }
+    if (filters?.type) {
+      whereClause += ` AND type = $${pIdx++}`;
+      params.push(filters.type);
+    }
     if (filters?.paper) {
       whereClause += ` AND paper = $${pIdx++}`;
       params.push(filters.paper);
@@ -959,6 +975,10 @@ export async function getAllQuestions(filters?: {
     if (filters?.category) {
       whereClause += ` AND (category = $${pIdx++} OR tags ILIKE $${pIdx++})`;
       params.push(filters.category, `%${filters.category}%`);
+    }
+    if (filters?.difficulty) {
+      whereClause += ` AND difficulty = $${pIdx++}`;
+      params.push(filters.difficulty);
     }
     if (filters?.tag) {
       whereClause += ` AND tags ILIKE $${pIdx++}`;
@@ -987,7 +1007,7 @@ export async function getAllQuestions(filters?: {
       dataParams.push(cursorData.id);
     }
 
-    dataSql += `${whereClause} ORDER BY created_at DESC, id DESC`;
+    dataSql += `${whereClause} ORDER BY created_at DESC NULLS LAST, id DESC`;
 
     const fetchLimit = limit > 0 ? limit + 1 : 0;
     if (fetchLimit > 0) {
@@ -1012,11 +1032,12 @@ export async function getAllQuestions(filters?: {
 
       const lastQuestion = questions[questions.length - 1];
       const nextCursor = hasMore && lastQuestion
-        ? encodeCursor(lastQuestion.star_rating ? (lastQuestion as any).created_at || Date.now() : Date.now(), lastQuestion.id)
+        ? encodeCursor((lastQuestion as any).created_at || Date.now(), lastQuestion.id)
         : null;
 
       const totalPages = limit > 0 ? Math.ceil(total / limit) || 1 : 1;
       return {
+        data: questions,
         questions,
         total,
         nextCursor,
@@ -1029,7 +1050,7 @@ export async function getAllQuestions(filters?: {
   } catch (err) {}
 
   // Fallback in-memory filter
-  let list = Array.from(memoryStore.questions.values());
+  let list = Array.from(memoryStore.questions.values()).filter((q: any) => q.is_active !== false);
   if (filters?.subject_id) {
     list = list.filter((q) => q.subject_id === filters.subject_id);
   }
@@ -1039,6 +1060,9 @@ export async function getAllQuestions(filters?: {
   if (filters?.topic_id) {
     list = list.filter((q) => q.topic_id === filters.topic_id);
   }
+  if (filters?.type) {
+    list = list.filter((q) => (q.type || 'mcq') === filters.type);
+  }
   if (filters?.paper) {
     list = list.filter((q) => q.paper === filters.paper);
   }
@@ -1046,6 +1070,9 @@ export async function getAllQuestions(filters?: {
     list = list.filter(
       (q) => q.category === filters.category || (q.tags && q.tags.includes(filters.category!))
     );
+  }
+  if (filters?.difficulty) {
+    list = list.filter((q) => q.difficulty === filters.difficulty);
   }
   if (filters?.tag) {
     list = list.filter((q) => q.tags && q.tags.some((t) => t.toLowerCase().includes(filters.tag!.toLowerCase())));
@@ -1088,6 +1115,7 @@ export async function getAllQuestions(filters?: {
   const totalPages = limit > 0 ? Math.ceil(total / limit) || 1 : 1;
 
   return {
+    data: questions,
     questions,
     total,
     nextCursor,
@@ -2433,6 +2461,7 @@ export function formatRowToWrittenQuestion(row: any): WrittenQuestion {
 }
 
 export interface PaginatedWrittenQuestionsResult {
+  data: WrittenQuestion[];
   questions: WrittenQuestion[];
   total: number;
   nextCursor?: string | null;
@@ -2446,6 +2475,7 @@ export async function getAllWrittenQuestions(filters?: {
   subject_id?: string;
   chapter_id?: string;
   topic_id?: string;
+  type?: string;
   paper?: string;
   tag?: string;
   search?: string;
@@ -2516,7 +2546,7 @@ export async function getAllWrittenQuestions(filters?: {
       dataParams.push(cursorData.id);
     }
 
-    dataSql += `${whereClause} ORDER BY question_number ASC NULLS LAST, created_at DESC, id DESC`;
+    dataSql += `${whereClause} ORDER BY question_number ASC NULLS LAST, created_at DESC NULLS LAST, id DESC`;
 
     const fetchLimit = limit > 0 ? limit + 1 : 0;
     if (fetchLimit > 0) {
@@ -2546,6 +2576,7 @@ export async function getAllWrittenQuestions(filters?: {
 
       const totalPages = limit > 0 ? Math.ceil(total / limit) || 1 : 1;
       return {
+        data: questions,
         questions,
         total,
         nextCursor,
@@ -2622,6 +2653,7 @@ export async function getAllWrittenQuestions(filters?: {
   const totalPages = limit > 0 ? Math.ceil(total / limit) || 1 : 1;
 
   return {
+    data: questions,
     questions,
     total,
     nextCursor,

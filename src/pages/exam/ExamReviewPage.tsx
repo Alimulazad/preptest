@@ -3,6 +3,7 @@ import { ArrowLeft, ChevronDown, ChevronUp, Bookmark, Flag, Play, Check } from '
 import { ExamSessionResult } from './types';
 import { MathText } from '../../components/MathText';
 import { Question } from '../../types';
+import { OptimizedImage } from '../../components/common/OptimizedImage';
 
 interface ExamReviewPageProps {
   result: ExamSessionResult;
@@ -170,6 +171,19 @@ export const ExamReviewPage: React.FC<ExamReviewPageProps> = ({
                             <MathText text={q.math_formula_latex} />
                           </div>
                         )}
+
+                        {q.question_image_url && (
+                          <div className="mt-3 overflow-hidden rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-900/50 p-1">
+                            <OptimizedImage
+                              src={q.question_image_url}
+                              alt="Question diagram"
+                              maxWidth={800}
+                              showPreviewOnClick={true}
+                              className="max-h-60 w-auto max-w-full rounded-lg object-contain mx-auto"
+                              containerClassName="flex items-center justify-center min-h-[120px]"
+                            />
+                          </div>
+                        )}
                       </div>
 
                       <div className="w-5 h-5 rounded-full border border-slate-300 dark:border-slate-600 flex items-center justify-center text-xs font-bold text-slate-500 dark:text-slate-400 shrink-0">
@@ -245,6 +259,34 @@ export const ExamReviewPage: React.FC<ExamReviewPageProps> = ({
                           {q.explanation_latex && (
                             <div className="pt-1 font-mono text-emerald-900 dark:text-emerald-300">
                               <MathText text={q.explanation_latex} />
+                            </div>
+                          )}
+                          {q.explanation_image_url && (
+                            <div className="pt-2 overflow-hidden rounded-xl border border-emerald-300/60 dark:border-emerald-800/60 bg-white/80 dark:bg-slate-900/80 p-1">
+                              <OptimizedImage
+                                src={q.explanation_image_url}
+                                alt="Explanation Diagram"
+                                maxWidth={800}
+                                showPreviewOnClick={true}
+                                className="max-h-56 sm:max-h-72 w-auto max-w-full rounded-lg object-contain mx-auto"
+                                containerClassName="flex items-center justify-center min-h-[120px]"
+                              />
+                            </div>
+                          )}
+                          {q.explanation_image_urls && q.explanation_image_urls.length > 0 && (
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-2">
+                              {q.explanation_image_urls.map((imgUrl, iIdx) => (
+                                <div key={iIdx} className="overflow-hidden rounded-xl border border-emerald-300/60 dark:border-emerald-800/60 bg-white/80 dark:bg-slate-900/80 p-1">
+                                  <OptimizedImage
+                                    src={imgUrl}
+                                    alt={`Explanation Diagram ${iIdx + 1}`}
+                                    maxWidth={800}
+                                    showPreviewOnClick={true}
+                                    className="max-h-56 sm:max-h-72 w-auto max-w-full rounded-lg object-contain mx-auto"
+                                    containerClassName="flex items-center justify-center min-h-[120px]"
+                                  />
+                                </div>
+                              ))}
                             </div>
                           )}
                         </div>

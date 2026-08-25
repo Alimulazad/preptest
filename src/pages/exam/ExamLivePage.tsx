@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { ArrowLeft, LayoutGrid, CheckCircle2, Clock, AlertTriangle, X } from 'lucide-react';
 import { Question } from '../../types';
 import { MathText } from '../../components/MathText';
+import { OptimizedImage } from '../../components/common/OptimizedImage';
 
 interface ExamLivePageProps {
   title: string;
@@ -54,6 +55,19 @@ const ExamLiveQuestionItemComponent: React.FC<ExamLiveQuestionItemProps> = ({
           {question.math_formula_latex && (
             <div className="mt-2 text-indigo-900 dark:text-indigo-300 font-serif">
               <MathText text={question.math_formula_latex} />
+            </div>
+          )}
+
+          {question.question_image_url && (
+            <div className="mt-3 overflow-hidden rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-900/50 p-1">
+              <OptimizedImage
+                src={question.question_image_url}
+                alt="Question diagram"
+                maxWidth={800}
+                showPreviewOnClick={true}
+                className="max-h-60 w-auto max-w-full rounded-lg object-contain mx-auto"
+                containerClassName="flex items-center justify-center min-h-[120px]"
+              />
             </div>
           )}
         </div>

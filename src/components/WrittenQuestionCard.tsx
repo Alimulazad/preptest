@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { ChevronDown, ChevronUp, Bookmark, Eye, EyeOff, Sparkles, Flag, FileText, CheckCircle2 } from 'lucide-react';
 import { WrittenQuestion } from '../types';
 import MathText from './MathText';
+import { OptimizedImage } from './common/OptimizedImage';
 
 export interface WrittenQuestionCardProps {
   question: WrittenQuestion;
@@ -95,12 +96,14 @@ export const WrittenQuestionCard: React.FC<WrittenQuestionCardProps> = ({
 
       {/* Question Image if exists */}
       {question.question_image_url && (
-        <div className="my-3 rounded-xl overflow-hidden border border-slate-200 dark:border-slate-800 max-w-lg bg-slate-50 dark:bg-slate-950">
-          <img
+        <div className="my-3 rounded-xl overflow-hidden border border-slate-200 dark:border-slate-800 max-w-lg bg-slate-50 dark:bg-slate-950 p-1">
+          <OptimizedImage
             src={question.question_image_url}
             alt="Question illustration"
+            maxWidth={800}
+            showPreviewOnClick={true}
             className="w-full h-auto object-contain max-h-72"
-            loading="lazy"
+            containerClassName="min-h-[140px]"
           />
         </div>
       )}
@@ -134,7 +137,23 @@ export const WrittenQuestionCard: React.FC<WrittenQuestionCardProps> = ({
               <MathText text={question.explanation_latex || question.explanation} />
             </div>
 
-            {/* Render Solution Image Arrays if present */}
+            {/* Render Solution Image Arrays or Single Image if present */}
+            {question.explanation_image_url && (!question.explanation_image_urls || question.explanation_image_urls.length === 0) && (
+              <div className="space-y-2 pt-2">
+                <span className="text-xs font-semibold text-purple-700 dark:text-purple-300">চিত্র/সমাধানের ছবি:</span>
+                <div className="rounded-xl overflow-hidden border border-purple-200 dark:border-purple-800 bg-white dark:bg-slate-900 p-1 max-w-lg">
+                  <OptimizedImage
+                    src={question.explanation_image_url}
+                    alt="Solution illustration"
+                    maxWidth={800}
+                    showPreviewOnClick={true}
+                    className="w-full h-auto object-contain rounded-lg max-h-64"
+                    containerClassName="min-h-[120px]"
+                  />
+                </div>
+              </div>
+            )}
+
             {question.explanation_image_urls && question.explanation_image_urls.length > 0 && (
               <div className="space-y-2 pt-2">
                 <span className="text-xs font-semibold text-purple-700 dark:text-purple-300">চিত্র/সমাধানের ছবি:</span>
@@ -144,11 +163,13 @@ export const WrittenQuestionCard: React.FC<WrittenQuestionCardProps> = ({
                       key={imgIdx}
                       className="rounded-xl overflow-hidden border border-purple-200 dark:border-purple-800 bg-white dark:bg-slate-900 p-1"
                     >
-                      <img
+                      <OptimizedImage
                         src={imgUrl}
                         alt={`Solution step ${imgIdx + 1}`}
+                        maxWidth={800}
+                        showPreviewOnClick={true}
                         className="w-full h-auto object-contain rounded-lg max-h-64"
-                        loading="lazy"
+                        containerClassName="min-h-[120px]"
                       />
                     </div>
                   ))}
