@@ -150,88 +150,46 @@ export const VirtualizedQuestionList: React.FC<VirtualizedQuestionListProps> = (
     <div
       ref={parentRef}
       id="virtualized-question-scroll-container"
-      className="w-full overflow-y-auto max-h-[calc(100vh-210px)] sm:max-h-[calc(100vh-240px)] pr-1.5 scroll-smooth custom-scrollbar"
-      style={{
-        contain: 'strict',
-      }}
+      className="w-full pr-1.5"
     >
-      <div
-        style={{
-          height: `${rowVirtualizer.getTotalSize()}px`,
-          width: '100%',
-          position: 'relative',
-        }}
-      >
-        {virtualItems.map((virtualRow) => {
-          const isLoaderRow = virtualRow.index >= items.length;
-          const item = items[virtualRow.index];
+      <div className="space-y-4">
+        {items.map((item, idx) => {
+          const isItemWritten =
+            type === 'written' ||
+            (item as any).type === 'written' ||
+            (!('options' in item) && ('explanation_image_urls' in item || 'question_number' in item));
 
+          if (isItemWritten) {
+            const writtenQ = item as WrittenQuestion;
+            return (
+              <WrittenQuestionCard
+                key={writtenQ.id}
+                question={writtenQ}
+                index={idx}
+                isBookmarked={bookmarkSet.has(writtenQ.id)}
+                onToggleBookmark={() => onToggleBookmark?.(writtenQ.id)}
+                onAskAI={onAskAI ? () => onAskAI(writtenQ) : undefined}
+                forceShowAnswer={forceShowAnswer}
+              />
+            );
+          }
+
+          const mcqQ = item as Question;
           return (
-            <div
-              key={virtualRow.key}
-              data-index={virtualRow.index}
-              ref={rowVirtualizer.measureElement}
-              style={{
-                position: 'absolute',
-                top: 0,
-                left: 0,
-                width: '100%',
-                transform: `translateY(${virtualRow.start}px)`,
-                paddingBottom: '16px',
-              }}
-            >
-              {isLoaderRow ? (
-                <div className="py-2">
-                  <QuestionSkeleton />
-                  {isFetchingNextPage && (
-                    <div className="flex items-center justify-center gap-2 py-3 text-xs font-semibold text-emerald-600 dark:text-emerald-400 animate-pulse">
-                      <Sparkles className="w-4 h-4" />
-                      <span>আরও প্রশ্ন লোড করা হচ্ছে...</span>
-                    </div>
-                  )}
-                </div>
-              ) : item ? (
-                (() => {
-                  const isItemWritten =
-                    type === 'written' ||
-                    (item as any).type === 'written' ||
-                    (!('options' in item) && ('explanation_image_urls' in item || 'question_number' in item));
-
-                  if (isItemWritten) {
-                    const writtenQ = item as WrittenQuestion;
-                    return (
-                      <WrittenQuestionCard
-                        key={writtenQ.id}
-                        question={writtenQ}
-                        index={virtualRow.index}
-                        isBookmarked={bookmarkSet.has(writtenQ.id)}
-                        onToggleBookmark={() => onToggleBookmark?.(writtenQ.id)}
-                        onAskAI={onAskAI ? () => onAskAI(writtenQ) : undefined}
-                        forceShowAnswer={forceShowAnswer}
-                      />
-                    );
-                  }
-
-                  const mcqQ = item as Question;
-                  return (
-                    <QuestionCard
-                      key={mcqQ.id}
-                      question={mcqQ}
-                      index={virtualRow.index}
-                      mode={mode}
-                      selectedOption={selectedOptions[mcqQ.id]}
-                      onSelectOption={
-                        onSelectOption ? (opt) => onSelectOption(mcqQ.id, opt) : undefined
-                      }
-                      isBookmarked={bookmarkSet.has(mcqQ.id)}
-                      onToggleBookmark={() => onToggleBookmark?.(mcqQ.id)}
-                      onAskAI={onAskAI ? () => onAskAI(mcqQ) : undefined}
-                      forceShowAnswer={forceShowAnswer}
-                    />
-                  );
-                })()
-              ) : null}
-            </div>
+            <QuestionCard
+              key={mcqQ.id}
+              question={mcqQ}
+              index={idx}
+              mode={mode}
+              selectedOption={selectedOptions[mcqQ.id]}
+              onSelectOption={
+                onSelectOption ? (opt) => onSelectOption(mcqQ.id, opt) : undefined
+              }
+              isBookmarked={bookmarkSet.has(mcqQ.id)}
+              onToggleBookmark={() => onToggleBookmark?.(mcqQ.id)}
+              onAskAI={onAskAI ? () => onAskAI(mcqQ) : undefined}
+              forceShowAnswer={forceShowAnswer}
+            />
           );
         })}
       </div>

@@ -1,32 +1,22 @@
 import React from 'react';
 
 export const QuestionSkeleton: React.FC = () => (
-  <div className="p-4 sm:p-5 rounded-2xl bg-white dark:bg-slate-800/90 border border-slate-200/80 dark:border-slate-700/80 shadow-sm space-y-4 animate-pulse">
-    {/* Tags */}
-    <div className="flex items-center gap-2">
-      <div className="h-5 w-16 bg-slate-200 dark:bg-slate-700 rounded-full" />
-      <div className="h-5 w-24 bg-slate-200 dark:bg-slate-700 rounded-full" />
-      <div className="h-5 w-12 bg-slate-200 dark:bg-slate-700 rounded-full ml-auto" />
+  <div className="p-4 sm:p-5 rounded-2xl bg-white dark:bg-slate-850 border border-slate-200/80 dark:border-slate-750 shadow-2xs space-y-3.5 animate-pulse">
+    {/* Question Title Bar */}
+    <div className="h-5 bg-slate-200/90 dark:bg-slate-700/80 rounded-md w-3/4" />
+
+    {/* 4 Option Bars matching video */}
+    <div className="space-y-2 pt-1">
+      <div className="h-10 bg-slate-100 dark:bg-slate-800 rounded-xl border border-slate-200/50 dark:border-slate-700/50 w-full" />
+      <div className="h-10 bg-slate-100 dark:bg-slate-800 rounded-xl border border-slate-200/50 dark:border-slate-700/50 w-full" />
+      <div className="h-10 bg-slate-100 dark:bg-slate-800 rounded-xl border border-slate-200/50 dark:border-slate-700/50 w-full" />
+      <div className="h-10 bg-slate-100 dark:bg-slate-800 rounded-xl border border-slate-200/50 dark:border-slate-700/50 w-full" />
     </div>
 
-    {/* Question Title */}
-    <div className="space-y-2">
-      <div className="h-4 bg-slate-200 dark:bg-slate-700 rounded w-5/6" />
-      <div className="h-4 bg-slate-200 dark:bg-slate-700 rounded w-2/3" />
-    </div>
-
-    {/* Options Grid */}
-    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-2">
-      <div className="h-10 bg-slate-100 dark:bg-slate-700/50 rounded-xl border border-slate-200/60 dark:border-slate-700" />
-      <div className="h-10 bg-slate-100 dark:bg-slate-700/50 rounded-xl border border-slate-200/60 dark:border-slate-700" />
-      <div className="h-10 bg-slate-100 dark:bg-slate-700/50 rounded-xl border border-slate-200/60 dark:border-slate-700" />
-      <div className="h-10 bg-slate-100 dark:bg-slate-700/50 rounded-xl border border-slate-200/60 dark:border-slate-700" />
-    </div>
-
-    {/* Bottom bar */}
-    <div className="flex items-center justify-between pt-2 border-t border-slate-100 dark:border-slate-700/50">
-      <div className="h-4 w-20 bg-slate-200 dark:bg-slate-700 rounded" />
-      <div className="h-7 w-28 bg-slate-200 dark:bg-slate-700 rounded-xl" />
+    {/* Explanation / Bottom Action Bar Placeholder */}
+    <div className="pt-2 flex items-center justify-between border-t border-slate-100 dark:border-slate-800">
+      <div className="h-4 w-20 bg-slate-200/80 dark:bg-slate-700/60 rounded" />
+      <div className="h-7 w-24 bg-slate-200/80 dark:bg-slate-700/60 rounded-xl" />
     </div>
   </div>
 );
@@ -43,7 +33,7 @@ export const StatsCardSkeleton: React.FC = () => (
 );
 
 export const QuestionListSkeleton: React.FC<{ count?: number }> = ({ count = 3 }) => (
-  <div className="space-y-3.5">
+  <div className="space-y-4">
     {Array.from({ length: count }).map((_, i) => (
       <QuestionSkeleton key={i} />
     ))}

@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import {
   Search,
   X,
@@ -168,6 +168,9 @@ export const QuestionBankScreen: React.FC<QuestionBankScreenProps> = ({
   const [isFilterChanging, setIsFilterChanging] = useState<boolean>(false);
   const [questionTypeFilter, setQuestionTypeFilter] = useState<'all' | 'mcq' | 'written'>('mcq');
   const [showAllAnswers, setShowAllAnswers] = useState<boolean>(false);
+  const [visibleLimit, setVisibleLimit] = useState<number>(15);
+  const [isLoadingMore, setIsLoadingMore] = useState<boolean>(false);
+  const loadMoreTriggerRef = useRef<HTMLDivElement | null>(null);
 
   const [fetchedWrittenQuestions, setFetchedWrittenQuestions] = useState<WrittenQuestion[]>(INITIAL_WRITTEN_QUESTIONS);
 
@@ -187,6 +190,19 @@ export const QuestionBankScreen: React.FC<QuestionBankScreenProps> = ({
       ? propWrittenQuestions
       : fetchedWrittenQuestions;
   }, [propWrittenQuestions, fetchedWrittenQuestions]);
+
+  // Trigger glowing skeleton and reset visible limit whenever category/chapter/filter changes
+  useEffect(() => {
+    if (selectedSubject && selectedCategory) {
+      setIsFilterChanging(true);
+      setVisibleLimit(15);
+      setIsLoadingMore(false);
+      const timer = setTimeout(() => {
+        setIsFilterChanging(false);
+      }, 260);
+      return () => clearTimeout(timer);
+    }
+  }, [selectedSubject?.id, selectedCategory, selectedChapter, selectedTopicId, questionTypeFilter, searchQuery]);
 
   // Filtered Subjects for Level 1
   const filteredSubjects = useMemo(() => {
@@ -372,22 +388,17 @@ export const QuestionBankScreen: React.FC<QuestionBankScreenProps> = ({
 
     return list;
   }, [allWrittenQuestions, selectedSubject, selectedCategory, selectedChapter, selectedTopicId, searchQuery]);
-
   // Handlers for Chapter & Topic Selection
   const handleSelectChapter = (ch: Chapter) => {
     setSelectedChapter(ch);
     setSelectedTopicId(null);
     setIsDrilledIntoTopics(true);
-    setIsFilterChanging(true);
-    setTimeout(() => setIsFilterChanging(false), 180);
   };
 
   const handleSelectAllChapters = () => {
     setSelectedChapter('all');
     setSelectedTopicId(null);
     setIsDrilledIntoTopics(false);
-    setIsFilterChanging(true);
-    setTimeout(() => setIsFilterChanging(false), 180);
   };
 
   const handleBackToChapters = () => {
@@ -396,9 +407,38 @@ export const QuestionBankScreen: React.FC<QuestionBankScreenProps> = ({
 
   const handleSelectTopic = (topicId: string | null) => {
     setSelectedTopicId(topicId);
-    setIsFilterChanging(true);
-    setTimeout(() => setIsFilterChanging(false), 180);
   };
+
+  // IntersectionObserver for continuous Infinite Scrolling with Bottom Circular Spinner
+  useEffect(() => {
+    if (isFilterChanging || isLoading) return;
+    const isWrittenMode = questionTypeFilter === 'written';
+    const activeList = isWrittenMode ? currentWrittenQuestions : currentQuestions;
+    if (visibleLimit >= activeList.length) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const first = entries[0];
+        if (first.isIntersecting && !isLoadingMore && visibleLimit < activeList.length) {
+          setIsLoadingMore(true);
+          setTimeout(() => {
+            setVisibleLimit((prev) => Math.min(prev + 15, activeList.length));
+            setIsLoadingMore(false);
+          }, 280);
+        }
+      },
+      { threshold: 0.1, rootMargin: '200px' }
+    );
+
+    const currentTrigger = loadMoreTriggerRef.current;
+    if (currentTrigger) {
+      observer.observe(currentTrigger);
+    }
+
+    return () => {
+      if (currentTrigger) observer.unobserve(currentTrigger);
+    };
+  }, [visibleLimit, currentQuestions.length, currentWrittenQuestions.length, questionTypeFilter, isLoadingMore, isFilterChanging, isLoading]);
 
   // Render subject icon helper
   const renderSubjectArt = (sub: SubjectInfo) => {
@@ -421,10 +461,11 @@ export const QuestionBankScreen: React.FC<QuestionBankScreenProps> = ({
 
     const isWrittenMode = questionTypeFilter === 'written';
     const activeList = isWrittenMode ? currentWrittenQuestions : currentQuestions;
+    const displayedItems = activeList.slice(0, visibleLimit);
 
     return (
       <div className="space-y-4 pb-36 max-w-2xl mx-auto px-1 sm:px-2">
-        {/* Top Header (Matching Screenshots 1-4) */}
+        {/* Top Header (Matching Screenshots 1-4 & Video) */}
         <div className="pt-2 pb-1 flex items-center justify-between border-b border-slate-200/80 dark:border-slate-750">
           <div className="flex items-center gap-2.5">
             <button
@@ -476,25 +517,56 @@ export const QuestionBankScreen: React.FC<QuestionBankScreenProps> = ({
           </div>
         </div>
 
-        {/* Questions List with Virtualization for High-Performance Scrolling */}
+        {/* Questions List with Glowing Skeleton Shimmer & Infinite Scrolling */}
         {isLoading || isFilterChanging ? (
-          <div className="space-y-3 pt-1" id="question-bank-skeleton-loading">
+          <div className="space-y-4 pt-1" id="question-bank-skeleton-loading">
             <QuestionListSkeleton count={4} />
           </div>
-        ) : activeList.length > 0 ? (
-          <div className="pt-1">
-            <VirtualizedQuestionList
-              items={activeList}
-              type={isWrittenMode ? 'written' : 'mcq'}
-              bookmarkedIds={bookmarks}
-              onToggleBookmark={onToggleBookmark}
-              onAskAI={onAskAI}
-              forceShowAnswer={showAllAnswers}
-              mode="practice"
-              fetchNextPage={() => {}}
-              hasNextPage={false}
-              isLoading={isLoading}
-            />
+        ) : displayedItems.length > 0 ? (
+          <div className="space-y-4 pt-1">
+            {isWrittenMode ? (
+              (displayedItems as WrittenQuestion[]).map((wq, idx) => (
+                <WrittenQuestionCard
+                  key={wq.id}
+                  question={wq}
+                  index={idx}
+                  forceShowAnswer={showAllAnswers}
+                  isBookmarked={bookmarks.includes(wq.id)}
+                  onToggleBookmark={() => onToggleBookmark(wq.id)}
+                  onAskAI={onAskAI as any}
+                />
+              ))
+            ) : (
+              (displayedItems as Question[]).map((q, idx) => (
+                <QuestionCard
+                  key={q.id}
+                  question={q}
+                  index={idx}
+                  mode="practice"
+                  forceShowAnswer={showAllAnswers}
+                  isBookmarked={bookmarks.includes(q.id)}
+                  onToggleBookmark={() => onToggleBookmark(q.id)}
+                  onAskAI={onAskAI}
+                />
+              ))
+            )}
+
+            {/* Bottom Sentinel and Green Circular Spinner matching Screenshot 2, 3 & Video */}
+            {visibleLimit < activeList.length && (
+              <div
+                ref={loadMoreTriggerRef}
+                className="py-5 flex flex-col items-center justify-center gap-2"
+              >
+                <div className="w-7 h-7 rounded-full border-3 border-emerald-500/20 border-t-emerald-600 dark:border-t-emerald-400 animate-spin" />
+              </div>
+            )}
+
+            {/* Subtle end of questions banner */}
+            {visibleLimit >= activeList.length && activeList.length > 0 && (
+              <div className="text-center py-6 text-xs text-slate-400 dark:text-slate-500 font-medium">
+                — সকল প্রশ্ন দেখানো হয়েছে ({toBengaliNumber(activeList.length)} টি) —
+              </div>
+            )}
           </div>
         ) : (
           <EmptyState
