@@ -27,18 +27,21 @@ import {
   Eye,
   EyeOff
 } from 'lucide-react';
-import { SubjectInfo, Question, ExamCategory, QuestionSubject, Chapter } from '../types';
+import { SubjectInfo, Question, WrittenQuestion, ExamCategory, QuestionSubject, Chapter } from '../types';
 import { SUBJECTS_DATA, UNIVERSITIES_DATA, CHAPTERS_DATA } from '../data/admissionData';
 import { COMPREHENSIVE_CHAPTERS_DATA } from '../data/subjectTopicsData';
+import { INITIAL_WRITTEN_QUESTIONS } from '../data/writtenQuestionsData';
 import QuestionCard from '../components/QuestionCard';
+import WrittenQuestionCard from '../components/WrittenQuestionCard';
 import EmptyState from '../components/common/EmptyState';
 import { QuestionListSkeleton } from '../components/common/SkeletonLoader';
 
 interface QuestionBankScreenProps {
   questions: Question[];
+  writtenQuestions?: WrittenQuestion[];
   bookmarks: string[];
   onToggleBookmark: (id: string) => void;
-  onAskAI: (question: Question) => void;
+  onAskAI: (question: Question | WrittenQuestion) => void;
   isLoading?: boolean;
 }
 
@@ -147,6 +150,7 @@ const CATEGORY_CARDS_CONFIG: CategoryCardConfig[] = [
 
 export const QuestionBankScreen: React.FC<QuestionBankScreenProps> = ({
   questions,
+  writtenQuestions: propWrittenQuestions,
   bookmarks,
   onToggleBookmark,
   onAskAI,
@@ -165,6 +169,25 @@ export const QuestionBankScreen: React.FC<QuestionBankScreenProps> = ({
   const [showAllAnswers, setShowAllAnswers] = useState<boolean>(false);
   const [page, setPage] = useState<number>(1);
   const pageSize = 15;
+
+  const [fetchedWrittenQuestions, setFetchedWrittenQuestions] = useState<WrittenQuestion[]>(INITIAL_WRITTEN_QUESTIONS);
+
+  useEffect(() => {
+    fetch('/api/written-questions')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (data && Array.isArray(data) && data.length > 0) {
+          setFetchedWrittenQuestions(data);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  const allWrittenQuestions = useMemo(() => {
+    return propWrittenQuestions && propWrittenQuestions.length > 0
+      ? propWrittenQuestions
+      : fetchedWrittenQuestions;
+  }, [propWrittenQuestions, fetchedWrittenQuestions]);
 
   // Reset page whenever filter changes
   useEffect(() => {
@@ -255,11 +278,14 @@ export const QuestionBankScreen: React.FC<QuestionBankScreenProps> = ({
     // Apply chapter filter
     if (selectedChapter && selectedChapter !== 'all') {
       const chapterMatched = list.filter(
-        (q) => q.chapter_id === selectedChapter.id || q.chapter_name.includes(selectedChapter.bangla_name)
+        (q) =>
+          q.chapter_id === selectedChapter.id ||
+          (q.chapter_name && selectedChapter.bangla_name && (
+            q.chapter_name.includes(selectedChapter.bangla_name) ||
+            selectedChapter.bangla_name.includes(q.chapter_name)
+          ))
       );
-      if (chapterMatched.length > 0) {
-        list = chapterMatched;
-      }
+      list = chapterMatched;
 
       // Apply topic filter if a specific subtopic is selected
       if (selectedTopicId) {
@@ -270,12 +296,10 @@ export const QuestionBankScreen: React.FC<QuestionBankScreenProps> = ({
           (q) =>
             q.topic_id === selectedTopicId ||
             (subtopicName && q.topic_name?.includes(subtopicName)) ||
+            (subtopicName && subtopicName.includes(q.topic_name || '')) ||
             (subtopicName && q.tags?.some((t) => t.includes(subtopicName)))
         );
-
-        if (topicMatched.length > 0) {
-          list = topicMatched;
-        }
+        list = topicMatched;
       }
     }
 
@@ -298,6 +322,62 @@ export const QuestionBankScreen: React.FC<QuestionBankScreenProps> = ({
 
     return list;
   }, [questions, selectedSubject, selectedCategory, selectedChapter, selectedTopicId, questionTypeFilter, searchQuery]);
+
+  // Filtered Written Questions
+  const currentWrittenQuestions = useMemo(() => {
+    if (!selectedSubject || !selectedCategory) return [];
+
+    let list = allWrittenQuestions.filter(
+      (q) => q.subject_id === selectedSubject.id || (q.subject_name && q.subject_name.includes(selectedSubject.bangla_name))
+    );
+
+    // Apply category filter
+    const categoryMatched = list.filter((q) => matchesCategory(q as any, selectedCategory));
+    if (categoryMatched.length > 0) {
+      list = categoryMatched;
+    }
+
+    // Apply chapter filter
+    if (selectedChapter && selectedChapter !== 'all') {
+      const chapterMatched = list.filter(
+        (q) =>
+          q.chapter_id === selectedChapter.id ||
+          (q.chapter_name && selectedChapter.bangla_name && (
+            q.chapter_name.includes(selectedChapter.bangla_name) ||
+            selectedChapter.bangla_name.includes(q.chapter_name)
+          ))
+      );
+      list = chapterMatched;
+
+      if (selectedTopicId) {
+        const subtopic = selectedChapter.subtopics?.find((st) => st.id === selectedTopicId);
+        const subtopicName = subtopic?.bangla_name || '';
+
+        const topicMatched = list.filter(
+          (q) =>
+            q.topic_id === selectedTopicId ||
+            (subtopicName && q.topic_name?.includes(subtopicName)) ||
+            (subtopicName && subtopicName.includes(q.topic_name || '')) ||
+            (subtopicName && q.tags?.some((t) => t.includes(subtopicName)))
+        );
+        list = topicMatched;
+      }
+    }
+
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase();
+      list = list.filter(
+        (item) =>
+          item.question_text.toLowerCase().includes(q) ||
+          item.explanation.toLowerCase().includes(q) ||
+          item.tags.some((t) => t.toLowerCase().includes(q)) ||
+          item.chapter_name.includes(q) ||
+          (item.topic_name && item.topic_name.includes(q))
+      );
+    }
+
+    return list;
+  }, [allWrittenQuestions, selectedSubject, selectedCategory, selectedChapter, selectedTopicId, searchQuery]);
 
   // Handlers for Chapter & Topic Selection
   const handleSelectChapter = (ch: Chapter) => {
@@ -345,11 +425,14 @@ export const QuestionBankScreen: React.FC<QuestionBankScreenProps> = ({
     const activeCategoryInfo = CATEGORY_CARDS_CONFIG.find((c) => c.id === selectedCategory);
     const activeCategoryLabel = activeCategoryInfo ? activeCategoryInfo.label : selectedCategory;
 
-    const totalPages = Math.ceil(currentQuestions.length / pageSize) || 1;
+    const isWrittenMode = questionTypeFilter === 'written';
+    const activeList = isWrittenMode ? currentWrittenQuestions : currentQuestions;
+
+    const totalPages = Math.ceil(activeList.length / pageSize) || 1;
     const safePage = Math.min(Math.max(1, page), totalPages);
     const startIndex = (safePage - 1) * pageSize;
-    const endIndex = Math.min(startIndex + pageSize, currentQuestions.length);
-    const paginatedQuestions = currentQuestions.slice(startIndex, endIndex);
+    const endIndex = Math.min(startIndex + pageSize, activeList.length);
+    const paginatedItems = activeList.slice(startIndex, endIndex);
 
     const handlePageChange = (newPage: number) => {
       if (newPage < 1 || newPage > totalPages) return;
@@ -406,13 +489,13 @@ export const QuestionBankScreen: React.FC<QuestionBankScreenProps> = ({
             </button>
 
             <span className="px-2.5 py-1 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-xs font-bold font-mono border border-slate-200/60 dark:border-slate-700">
-              {toBengaliNumber(currentQuestions.length)} টি প্রশ্ন
+              {toBengaliNumber(activeList.length)} টি প্রশ্ন
             </span>
           </div>
         </div>
 
         {/* Range Indicator */}
-        {currentQuestions.length > 0 && totalPages > 1 && (
+        {activeList.length > 0 && totalPages > 1 && (
           <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400 font-medium px-1">
             <span>
               দেখানো হচ্ছে: <strong className="text-slate-800 dark:text-slate-200 font-mono">{toBengaliNumber(startIndex + 1)} - {toBengaliNumber(endIndex)}</strong>
@@ -428,20 +511,34 @@ export const QuestionBankScreen: React.FC<QuestionBankScreenProps> = ({
           <div className="space-y-3 pt-1" id="question-bank-skeleton-loading">
             <QuestionListSkeleton count={4} />
           </div>
-        ) : paginatedQuestions.length > 0 ? (
+        ) : paginatedItems.length > 0 ? (
           <div className="space-y-3 pt-1">
-            {paginatedQuestions.map((q, idx) => (
-              <QuestionCard
-                key={q.id}
-                question={q}
-                index={startIndex + idx}
-                mode="practice"
-                forceShowAnswer={showAllAnswers}
-                isBookmarked={bookmarks.includes(q.id)}
-                onToggleBookmark={() => onToggleBookmark(q.id)}
-                onAskAI={onAskAI}
-              />
-            ))}
+            {isWrittenMode ? (
+              (paginatedItems as WrittenQuestion[]).map((wq, idx) => (
+                <WrittenQuestionCard
+                  key={wq.id}
+                  question={wq}
+                  index={startIndex + idx}
+                  forceShowAnswer={showAllAnswers}
+                  isBookmarked={bookmarks.includes(wq.id)}
+                  onToggleBookmark={() => onToggleBookmark(wq.id)}
+                  onAskAI={onAskAI as any}
+                />
+              ))
+            ) : (
+              (paginatedItems as Question[]).map((q, idx) => (
+                <QuestionCard
+                  key={q.id}
+                  question={q}
+                  index={startIndex + idx}
+                  mode="practice"
+                  forceShowAnswer={showAllAnswers}
+                  isBookmarked={bookmarks.includes(q.id)}
+                  onToggleBookmark={() => onToggleBookmark(q.id)}
+                  onAskAI={onAskAI}
+                />
+              ))
+            )}
 
             {/* Pagination Controls */}
             {totalPages > 1 && (
@@ -511,7 +608,7 @@ export const QuestionBankScreen: React.FC<QuestionBankScreenProps> = ({
         )}
 
         {/* Sticky Bottom Bar: Horizontal Scrollable Chapter/Topic Chips + MCQ/Written Toggle (Matching Video) */}
-        <div className="fixed bottom-0 left-0 right-0 z-40 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-slate-200/90 dark:border-slate-800 py-2.5 px-3 max-w-2xl mx-auto shadow-lg space-y-2">
+        <div className="fixed bottom-[56px] left-0 right-0 z-30 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-slate-200/90 dark:border-slate-800 py-2.5 px-3 max-w-2xl mx-auto shadow-lg space-y-2">
           {/* Row 1: Horizontal Scrollable Chapter / Topic Chips */}
           <div className="flex items-center gap-2 overflow-x-auto pb-1 no-scrollbar text-xs">
             {!isDrilledIntoTopics || selectedChapter === 'all' || !selectedChapter ? (

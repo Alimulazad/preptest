@@ -158,6 +158,40 @@ export const migrations: Migration[] = [
       `);
     },
   },
+  {
+    id: '004_create_written_questions_table',
+    name: 'Create written_questions table for descriptive engineering and varsity questions',
+    up: async (client: pg.PoolClient) => {
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS written_questions (
+          id VARCHAR(255) PRIMARY KEY,
+          subject_id VARCHAR(50) NOT NULL,
+          subject_name VARCHAR(100) NOT NULL,
+          paper VARCHAR(10) NOT NULL,
+          chapter_id VARCHAR(50) NOT NULL,
+          chapter_name VARCHAR(150) NOT NULL,
+          topic_id VARCHAR(50),
+          topic_name VARCHAR(150),
+          question_number INTEGER,
+          question_text TEXT NOT NULL,
+          question_image_url TEXT,
+          explanation TEXT NOT NULL,
+          explanation_latex TEXT,
+          explanation_image_urls TEXT,
+          tags TEXT NOT NULL DEFAULT '[]',
+          category VARCHAR(30),
+          difficulty VARCHAR(20) DEFAULT 'medium',
+          star_rating SMALLINT DEFAULT 1,
+          created_at BIGINT,
+          updated_at BIGINT,
+          is_active BOOLEAN DEFAULT TRUE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_written_questions_subject_chapter ON written_questions (subject_id, chapter_id);
+        CREATE INDEX IF NOT EXISTS idx_written_questions_topic ON written_questions (topic_id);
+      `);
+    },
+  },
 ];
 
 export async function runMigrations(pool: pg.Pool): Promise<void> {

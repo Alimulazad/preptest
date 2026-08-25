@@ -14,6 +14,12 @@ import {
   insertQuestion,
   updateQuestionInDb,
   deleteQuestionFromDb,
+  getAllWrittenQuestions,
+  getWrittenQuestionById,
+  insertWrittenQuestion,
+  updateWrittenQuestionInDb,
+  deleteWrittenQuestionFromDb,
+  bulkImportWrittenQuestions,
   getAllTopics,
   getTopicById,
   insertTopic,
@@ -1601,6 +1607,113 @@ app.delete('/api/questions/:id', authenticateAdmin, async (req: Request, res: Re
   } catch (error: any) {
     console.error('Error deleting question from SQLite:', error);
     return res.status(500).json({ error: 'Failed to delete question', details: error.message });
+  }
+});
+
+// ---------------- WRITTEN QUESTIONS ENDPOINTS ----------------
+
+// GET /api/written-questions with optional filtering and pagination
+app.get('/api/written-questions', async (req: Request, res: Response) => {
+  try {
+    const { subject_id, chapter_id, topic_id, paper, tag, search, category, difficulty, page, limit } = req.query;
+
+    const pageNum = page !== undefined ? Math.max(1, parseInt(page as string, 10) || 1) : undefined;
+    const limitNum = limit !== undefined ? Math.max(1, parseInt(limit as string, 10) || 20) : undefined;
+
+    const result = await getAllWrittenQuestions({
+      subject_id: typeof subject_id === 'string' ? subject_id : undefined,
+      chapter_id: typeof chapter_id === 'string' ? chapter_id : undefined,
+      topic_id: typeof topic_id === 'string' ? topic_id : undefined,
+      paper: typeof paper === 'string' ? paper : undefined,
+      tag: typeof tag === 'string' ? tag : undefined,
+      search: typeof search === 'string' ? search : undefined,
+      category: typeof category === 'string' ? category : undefined,
+      difficulty: typeof difficulty === 'string' ? difficulty : undefined,
+      page: pageNum,
+      limit: limitNum,
+    });
+
+    res.setHeader('X-Total-Count', String(result.total));
+    res.setHeader('X-Page', String(result.page));
+    res.setHeader('X-Limit', String(result.limit));
+    res.setHeader('X-Total-Pages', String(result.totalPages));
+
+    if (pageNum !== undefined || limitNum !== undefined) {
+      return res.json({
+        questions: result.questions,
+        total: result.total,
+        page: result.page,
+        limit: result.limit,
+        totalPages: result.totalPages,
+      });
+    }
+
+    return res.json(result.questions);
+  } catch (error: any) {
+    console.error('Error fetching written questions:', error);
+    return res.status(500).json({ error: 'Failed to fetch written questions', details: error.message });
+  }
+});
+
+// GET /api/written-questions/:id
+app.get('/api/written-questions/:id', async (req: Request, res: Response) => {
+  try {
+    const question = await getWrittenQuestionById(req.params.id);
+    if (!question) {
+      return res.status(404).json({ error: 'Written question not found' });
+    }
+    return res.json(question);
+  } catch (error: any) {
+    console.error('Error getting written question:', error);
+    return res.status(500).json({ error: 'Database error', details: error.message });
+  }
+});
+
+// POST /api/written-questions (Protected Admin)
+app.post('/api/written-questions', authenticateAdmin, async (req: Request, res: Response) => {
+  try {
+    const body = req.body;
+    if (!body.question_text || !body.explanation) {
+      return res.status(400).json({ error: 'Question text and explanation are required' });
+    }
+
+    const created = await insertWrittenQuestion(body);
+    return res.status(201).json(created);
+  } catch (error: any) {
+    console.error('Error inserting written question:', error);
+    return res.status(500).json({ error: 'Failed to create written question', details: error.message });
+  }
+});
+
+// PUT /api/written-questions/:id (Protected Admin)
+app.put('/api/written-questions/:id', authenticateAdmin, async (req: Request, res: Response) => {
+  try {
+    const id = req.params.id;
+    const body = req.body;
+
+    const updated = await updateWrittenQuestionInDb(id, body);
+    if (!updated) {
+      return res.status(404).json({ error: 'Written question not found' });
+    }
+    return res.json(updated);
+  } catch (error: any) {
+    console.error('Error updating written question:', error);
+    return res.status(500).json({ error: 'Failed to update written question', details: error.message });
+  }
+});
+
+// DELETE /api/written-questions/:id (Protected Admin)
+app.delete('/api/written-questions/:id', authenticateAdmin, async (req: Request, res: Response) => {
+  try {
+    const id = req.params.id;
+    const success = await deleteWrittenQuestionFromDb(id);
+    if (!success) {
+      return res.status(404).json({ error: 'Written question not found' });
+    }
+    return res.json({ success: true, id });
+  } catch (error: any) {
+    console.error('Error deleting written question:', error);
+    return res.status(500).json({ error: 'Failed to delete written question', details: error.message });
   }
 });
 

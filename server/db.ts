@@ -1,7 +1,8 @@
 import pg from 'pg';
 import dotenv from 'dotenv';
 import { INITIAL_QUESTIONS, CHAPTERS_DATA, SUBJECTS_DATA, INITIAL_KNOWLEDGE_SNIPPETS } from '../src/data/admissionData.js';
-import { Question, KnowledgeSnippet, TopicRecord } from '../src/types.js';
+import { INITIAL_WRITTEN_QUESTIONS } from '../src/data/writtenQuestionsData.js';
+import { Question, WrittenQuestion, KnowledgeSnippet, TopicRecord } from '../src/types.js';
 import { logger } from './utils/logger.js';
 import { runMigrations } from './migrations.js';
 
@@ -51,6 +52,7 @@ let initPromise: Promise<void> | null = null;
 // In-Memory Data Storage (serves as resilient fallback if PostgreSQL is not running/connected)
 const memoryStore = {
   questions: new Map<string, Question>(),
+  writtenQuestions: new Map<string, WrittenQuestion>(),
   topics: new Map<string, TopicRecord>(),
   snippets: new Map<string, KnowledgeSnippet>(),
   users: new Map<string, UserRecord>(),
@@ -70,7 +72,7 @@ const memoryStore = {
 
 // Seed in-memory store initially
 function seedMemoryStore() {
-  if (memoryStore.questions.size > 0) return;
+  if (memoryStore.questions.size > 0 && memoryStore.writtenQuestions.size > 0) return;
 
   // 1. Topics
   if (Array.isArray(CHAPTERS_DATA)) {
@@ -100,9 +102,16 @@ function seedMemoryStore() {
     }
   }
 
-  // 2. Questions
+  // 2. MCQ Questions
   for (const q of INITIAL_QUESTIONS) {
     memoryStore.questions.set(q.id, { ...q });
+  }
+
+  // 3. Written Questions
+  if (Array.isArray(INITIAL_WRITTEN_QUESTIONS)) {
+    for (const wq of INITIAL_WRITTEN_QUESTIONS) {
+      memoryStore.writtenQuestions.set(wq.id, { ...wq });
+    }
   }
 
   // 3. Snippets
@@ -502,6 +511,42 @@ export async function getDatabase(): Promise<void> {
         );
       }
 
+      // Seed Written Questions in PG
+      for (const wq of memoryStore.writtenQuestions.values()) {
+        await activePool.query(
+          `INSERT INTO written_questions (
+            id, subject_id, subject_name, paper, chapter_id, chapter_name,
+            topic_id, topic_name, question_number, question_text, question_image_url,
+            explanation, explanation_latex, explanation_image_urls, tags, category,
+            difficulty, star_rating, created_at, updated_at, is_active
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
+          ON CONFLICT (id) DO NOTHING`,
+          [
+            wq.id,
+            wq.subject_id,
+            wq.subject_name,
+            wq.paper,
+            wq.chapter_id,
+            wq.chapter_name,
+            wq.topic_id || null,
+            wq.topic_name || null,
+            wq.question_number || null,
+            wq.question_text,
+            wq.question_image_url || null,
+            wq.explanation,
+            wq.explanation_latex || null,
+            wq.explanation_image_urls ? JSON.stringify(wq.explanation_image_urls) : null,
+            JSON.stringify(wq.tags || []),
+            wq.category || 'varsity_a',
+            wq.difficulty || 'medium',
+            wq.star_rating || 3,
+            wq.created_at || Date.now(),
+            wq.updated_at || Date.now(),
+            wq.is_active !== undefined ? wq.is_active : true,
+          ]
+        );
+      }
+
       // Seed Snippets in PG
       for (const s of memoryStore.snippets.values()) {
         await activePool.query(
@@ -512,7 +557,7 @@ export async function getDatabase(): Promise<void> {
         );
       }
 
-      console.log(`[PostgreSQL] ✅ Initialized & synced ${memoryStore.questions.size} questions, ${memoryStore.topics.size} topics, and formulas into PostgreSQL.`);
+      console.log(`[PostgreSQL] ✅ Initialized & synced ${memoryStore.questions.size} MCQ questions, ${memoryStore.writtenQuestions.size} Written questions, ${memoryStore.topics.size} topics into PostgreSQL.`);
     } catch (err: any) {
       isPgConnected = false;
       if (poolInstance) {
@@ -2267,4 +2312,354 @@ export async function getActiveUsersTelemetryFromDb(): Promise<{
     pageBreakdown,
     lastUpdated: now,
   };
+}
+
+// ---------------- WRITTEN QUESTIONS ----------------
+
+export function formatRowToWrittenQuestion(row: any): WrittenQuestion {
+  let tags: string[] = [];
+  try {
+    tags = typeof row.tags === 'string' ? JSON.parse(row.tags) : row.tags || [];
+  } catch (e) {
+    tags = [];
+  }
+
+  let explanation_image_urls: string[] | undefined = undefined;
+  if (row.explanation_image_urls) {
+    try {
+      explanation_image_urls =
+        typeof row.explanation_image_urls === 'string'
+          ? JSON.parse(row.explanation_image_urls)
+          : row.explanation_image_urls;
+    } catch (e) {
+      explanation_image_urls = undefined;
+    }
+  }
+
+  return {
+    id: String(row.id),
+    subject_id: row.subject_id,
+    subject_name: row.subject_name,
+    paper: row.paper,
+    chapter_id: row.chapter_id,
+    chapter_name: row.chapter_name,
+    topic_id: row.topic_id || undefined,
+    topic_name: row.topic_name || undefined,
+    question_number: row.question_number ? Number(row.question_number) : undefined,
+    question_text: row.question_text,
+    question_image_url: row.question_image_url || undefined,
+    explanation: row.explanation,
+    explanation_latex: row.explanation_latex || undefined,
+    explanation_image_urls,
+    tags,
+    category: row.category || undefined,
+    difficulty: row.difficulty || 'medium',
+    star_rating: (row.star_rating as 1 | 2 | 3) || 1,
+    created_at: row.created_at ? Number(row.created_at) : undefined,
+    updated_at: row.updated_at ? Number(row.updated_at) : undefined,
+    is_active: row.is_active !== undefined ? Boolean(row.is_active) : true,
+  };
+}
+
+export interface PaginatedWrittenQuestionsResult {
+  questions: WrittenQuestion[];
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+}
+
+export async function getAllWrittenQuestions(filters?: {
+  subject_id?: string;
+  chapter_id?: string;
+  topic_id?: string;
+  paper?: string;
+  tag?: string;
+  search?: string;
+  category?: string;
+  difficulty?: string;
+  page?: number;
+  limit?: number;
+}): Promise<PaginatedWrittenQuestionsResult> {
+  const page = Math.max(1, filters?.page || 1);
+  const limit = filters?.limit ? Math.max(1, filters.limit) : 0;
+  const offset = limit > 0 ? (page - 1) * limit : 0;
+
+  try {
+    let whereClause = ' WHERE is_active = TRUE';
+    const params: any[] = [];
+    let pIdx = 1;
+
+    if (filters?.subject_id) {
+      whereClause += ` AND subject_id = $${pIdx++}`;
+      params.push(filters.subject_id);
+    }
+    if (filters?.chapter_id) {
+      whereClause += ` AND chapter_id = $${pIdx++}`;
+      params.push(filters.chapter_id);
+    }
+    if (filters?.topic_id) {
+      whereClause += ` AND topic_id = $${pIdx++}`;
+      params.push(filters.topic_id);
+    }
+    if (filters?.paper) {
+      whereClause += ` AND paper = $${pIdx++}`;
+      params.push(filters.paper);
+    }
+    if (filters?.category) {
+      whereClause += ` AND (category = $${pIdx++} OR tags ILIKE $${pIdx++})`;
+      params.push(filters.category, `%${filters.category}%`);
+    }
+    if (filters?.difficulty) {
+      whereClause += ` AND difficulty = $${pIdx++}`;
+      params.push(filters.difficulty);
+    }
+    if (filters?.tag) {
+      whereClause += ` AND tags ILIKE $${pIdx++}`;
+      params.push(`%${filters.tag}%`);
+    }
+    if (filters?.search) {
+      const term = `%${filters.search}%`;
+      whereClause += ` AND (question_text ILIKE $${pIdx++} OR explanation ILIKE $${pIdx++} OR tags ILIKE $${pIdx++} OR chapter_name ILIKE $${pIdx++} OR topic_name ILIKE $${pIdx++})`;
+      params.push(term, term, term, term, term);
+    }
+
+    // 1. Get total count
+    const countSql = `SELECT COUNT(*) as total FROM written_questions${whereClause}`;
+    const countRes = await query(countSql, params);
+    const total = countRes && countRes.rows && countRes.rows[0] ? Number(countRes.rows[0].total) || 0 : 0;
+
+    // 2. Get questions with pagination
+    let dataSql = `SELECT * FROM written_questions${whereClause} ORDER BY question_number ASC NULLS LAST, created_at DESC`;
+    const dataParams = [...params];
+    if (limit > 0) {
+      dataSql += ` LIMIT $${pIdx++} OFFSET $${pIdx++}`;
+      dataParams.push(limit, offset);
+    }
+
+    const res = await query(dataSql, dataParams);
+    if (res && res.rows) {
+      const questions = res.rows.map(formatRowToWrittenQuestion);
+      const totalPages = limit > 0 ? Math.ceil(total / limit) || 1 : 1;
+      return {
+        questions,
+        total,
+        page,
+        limit: limit > 0 ? limit : total,
+        totalPages,
+      };
+    }
+  } catch (err) {}
+
+  // Fallback in-memory filter
+  let list = Array.from(memoryStore.writtenQuestions.values()).filter((q) => q.is_active !== false);
+  if (filters?.subject_id) {
+    list = list.filter((q) => q.subject_id === filters.subject_id);
+  }
+  if (filters?.chapter_id) {
+    list = list.filter((q) => q.chapter_id === filters.chapter_id);
+  }
+  if (filters?.topic_id) {
+    list = list.filter((q) => q.topic_id === filters.topic_id);
+  }
+  if (filters?.paper) {
+    list = list.filter((q) => q.paper === filters.paper);
+  }
+  if (filters?.category) {
+    const cat = filters.category.toLowerCase();
+    list = list.filter(
+      (q) => q.category === filters.category || (q.tags && q.tags.some((t) => t.toLowerCase().includes(cat)))
+    );
+  }
+  if (filters?.difficulty) {
+    list = list.filter((q) => q.difficulty === filters.difficulty);
+  }
+  if (filters?.tag) {
+    const tLower = filters.tag.toLowerCase();
+    list = list.filter((q) => q.tags && q.tags.some((t) => t.toLowerCase().includes(tLower)));
+  }
+  if (filters?.search) {
+    const s = filters.search.toLowerCase();
+    list = list.filter(
+      (q) =>
+        q.question_text.toLowerCase().includes(s) ||
+        q.explanation.toLowerCase().includes(s) ||
+        (q.chapter_name && q.chapter_name.toLowerCase().includes(s)) ||
+        (q.topic_name && q.topic_name.toLowerCase().includes(s)) ||
+        (q.tags && q.tags.some((t) => t.toLowerCase().includes(s)))
+    );
+  }
+
+  // Sort by question_number if available
+  list.sort((a, b) => (a.question_number || 9999) - (b.question_number || 9999));
+
+  const total = list.length;
+  const sliced = limit > 0 ? list.slice(offset, offset + limit) : list;
+  const totalPages = limit > 0 ? Math.ceil(total / limit) || 1 : 1;
+
+  return {
+    questions: sliced,
+    total,
+    page,
+    limit: limit > 0 ? limit : total,
+    totalPages,
+  };
+}
+
+export async function getWrittenQuestionById(id: string): Promise<WrittenQuestion | null> {
+  try {
+    const res = await query('SELECT * FROM written_questions WHERE id = $1', [id]);
+    if (res && res.rows.length > 0) return formatRowToWrittenQuestion(res.rows[0]);
+  } catch (err) {}
+
+  return memoryStore.writtenQuestions.get(id) || null;
+}
+
+export async function insertWrittenQuestion(q: Partial<WrittenQuestion>): Promise<WrittenQuestion> {
+  const now = Date.now();
+  const id = q.id || `wq_${q.subject_id || 'sub'}_${now}_${Math.random().toString(36).substring(2, 6)}`;
+  
+  const item: WrittenQuestion = {
+    id,
+    subject_id: q.subject_id || 'physics_2',
+    subject_name: q.subject_name || 'পদার্থবিজ্ঞান ২য় পত্র',
+    paper: (q.paper as any) || '2nd',
+    chapter_id: q.chapter_id || 'phy2_ch1',
+    chapter_name: q.chapter_name || 'তাপগতিবিদ্যা',
+    topic_id: q.topic_id,
+    topic_name: q.topic_name,
+    question_number: q.question_number ? Number(q.question_number) : undefined,
+    question_text: q.question_text || '',
+    question_image_url: q.question_image_url,
+    explanation: q.explanation || '',
+    explanation_latex: q.explanation_latex,
+    explanation_image_urls: q.explanation_image_urls || [],
+    tags: Array.isArray(q.tags) ? q.tags : [],
+    category: q.category || 'varsity_a',
+    difficulty: (q.difficulty as any) || 'medium',
+    star_rating: (q.star_rating as 1 | 2 | 3) || 1,
+    created_at: now,
+    updated_at: now,
+    is_active: q.is_active !== undefined ? q.is_active : true,
+  };
+
+  memoryStore.writtenQuestions.set(id, item);
+
+  await query(
+    `INSERT INTO written_questions (
+      id, subject_id, subject_name, paper, chapter_id, chapter_name,
+      topic_id, topic_name, question_number, question_text, question_image_url,
+      explanation, explanation_latex, explanation_image_urls, tags, category,
+      difficulty, star_rating, created_at, updated_at, is_active
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
+    ON CONFLICT (id) DO UPDATE SET
+      subject_id = EXCLUDED.subject_id,
+      subject_name = EXCLUDED.subject_name,
+      paper = EXCLUDED.paper,
+      chapter_id = EXCLUDED.chapter_id,
+      chapter_name = EXCLUDED.chapter_name,
+      topic_id = EXCLUDED.topic_id,
+      topic_name = EXCLUDED.topic_name,
+      question_number = EXCLUDED.question_number,
+      question_text = EXCLUDED.question_text,
+      question_image_url = EXCLUDED.question_image_url,
+      explanation = EXCLUDED.explanation,
+      explanation_latex = EXCLUDED.explanation_latex,
+      explanation_image_urls = EXCLUDED.explanation_image_urls,
+      tags = EXCLUDED.tags,
+      category = EXCLUDED.category,
+      difficulty = EXCLUDED.difficulty,
+      star_rating = EXCLUDED.star_rating,
+      updated_at = EXCLUDED.updated_at,
+      is_active = EXCLUDED.is_active`,
+    [
+      id,
+      item.subject_id,
+      item.subject_name,
+      item.paper,
+      item.chapter_id,
+      item.chapter_name,
+      item.topic_id || null,
+      item.topic_name || null,
+      item.question_number || null,
+      item.question_text,
+      item.question_image_url || null,
+      item.explanation,
+      item.explanation_latex || null,
+      item.explanation_image_urls ? JSON.stringify(item.explanation_image_urls) : null,
+      JSON.stringify(item.tags),
+      item.category || null,
+      item.difficulty,
+      item.star_rating,
+      item.created_at,
+      item.updated_at,
+      item.is_active,
+    ]
+  );
+
+  return item;
+}
+
+export async function updateWrittenQuestionInDb(id: string, q: Partial<WrittenQuestion>): Promise<WrittenQuestion | null> {
+  const existing = await getWrittenQuestionById(id);
+  if (!existing) return null;
+
+  const now = Date.now();
+  const updated: WrittenQuestion = {
+    ...existing,
+    ...q,
+    id,
+    updated_at: now,
+  };
+
+  memoryStore.writtenQuestions.set(id, updated);
+
+  await query(
+    `UPDATE written_questions SET
+      subject_id = $1, subject_name = $2, paper = $3, chapter_id = $4, chapter_name = $5,
+      topic_id = $6, topic_name = $7, question_number = $8, question_text = $9,
+      question_image_url = $10, explanation = $11, explanation_latex = $12,
+      explanation_image_urls = $13, tags = $14, category = $15, difficulty = $16,
+      star_rating = $17, updated_at = $18, is_active = $19
+    WHERE id = $20`,
+    [
+      updated.subject_id,
+      updated.subject_name,
+      updated.paper,
+      updated.chapter_id,
+      updated.chapter_name,
+      updated.topic_id || null,
+      updated.topic_name || null,
+      updated.question_number || null,
+      updated.question_text,
+      updated.question_image_url || null,
+      updated.explanation,
+      updated.explanation_latex || null,
+      updated.explanation_image_urls ? JSON.stringify(updated.explanation_image_urls) : null,
+      JSON.stringify(updated.tags || []),
+      updated.category || null,
+      updated.difficulty,
+      updated.star_rating,
+      updated.updated_at,
+      updated.is_active,
+      id,
+    ]
+  );
+
+  return updated;
+}
+
+export async function deleteWrittenQuestionFromDb(id: string): Promise<boolean> {
+  memoryStore.writtenQuestions.delete(id);
+  await query('DELETE FROM written_questions WHERE id = $1', [id]);
+  return true;
+}
+
+export async function bulkImportWrittenQuestions(items: Partial<WrittenQuestion>[]): Promise<WrittenQuestion[]> {
+  const imported: WrittenQuestion[] = [];
+  for (const item of items) {
+    const created = await insertWrittenQuestion(item);
+    imported.push(created);
+  }
+  return imported;
 }

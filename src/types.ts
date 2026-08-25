@@ -1,3 +1,27 @@
+export interface WrittenQuestion {
+  id: string;
+  subject_id: QuestionSubject | string;
+  subject_name: string;
+  paper: '1st' | '2nd' | 'all';
+  chapter_id: string;
+  chapter_name: string;
+  topic_id?: string;
+  topic_name?: string;
+  question_number?: number;
+  question_text: string;
+  question_image_url?: string;
+  explanation: string;
+  explanation_latex?: string;
+  explanation_image_urls?: string[];
+  tags: string[]; // e.g. ["KhU B 25-26", "DU A 24-25"]
+  category?: ExamCategory | string;
+  difficulty?: 'easy' | 'medium' | 'hard';
+  star_rating?: 1 | 2 | 3;
+  created_at?: number;
+  updated_at?: number;
+  is_active?: boolean;
+}
+
 export type NavigationTab = 'home' | 'question_bank' | 'exam' | 'history' | 'progress';
 
 export type QuestionSubject = 
