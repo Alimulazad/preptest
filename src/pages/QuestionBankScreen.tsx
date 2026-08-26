@@ -38,6 +38,7 @@ import WrittenQuestionCard from '../components/WrittenQuestionCard';
 import EmptyState from '../components/common/EmptyState';
 import { QuestionListSkeleton } from '../components/common/SkeletonLoader';
 import VirtualizedQuestionList from '../components/common/VirtualizedQuestionList';
+import { filterQuestions, matchCategory } from '../utils/questionFilter';
 
 interface QuestionBankScreenProps {
   questions: Question[];
@@ -269,118 +270,27 @@ export const QuestionBankScreen: React.FC<QuestionBankScreenProps> = ({
   const currentQuestions = useMemo(() => {
     if (!selectedSubject || !selectedCategory) return [];
 
-    let list = questions.filter(
-      (q) => q.subject_id === selectedSubject.id || q.subject_name.includes(selectedSubject.bangla_name)
-    );
-
-    // Apply category filter
-    const categoryMatched = list.filter((q) => matchesCategory(q, selectedCategory));
-    if (categoryMatched.length > 0) {
-      list = categoryMatched;
-    }
-
-    // Apply chapter filter
-    if (selectedChapter && selectedChapter !== 'all') {
-      const chapterMatched = list.filter(
-        (q) =>
-          q.chapter_id === selectedChapter.id ||
-          (q.chapter_name && selectedChapter.bangla_name && (
-            q.chapter_name.includes(selectedChapter.bangla_name) ||
-            selectedChapter.bangla_name.includes(q.chapter_name)
-          ))
-      );
-      list = chapterMatched;
-
-      // Apply topic filter if a specific subtopic is selected
-      if (selectedTopicId) {
-        const subtopic = selectedChapter.subtopics?.find((st) => st.id === selectedTopicId);
-        const subtopicName = subtopic?.bangla_name || '';
-
-        const topicMatched = list.filter(
-          (q) =>
-            q.topic_id === selectedTopicId ||
-            (subtopicName && q.topic_name?.includes(subtopicName)) ||
-            (subtopicName && subtopicName.includes(q.topic_name || '')) ||
-            (subtopicName && q.tags?.some((t) => t.includes(subtopicName)))
-        );
-        list = topicMatched;
-      }
-    }
-
-    // Question type filter
-    if (questionTypeFilter !== 'all') {
-      list = list.filter((q) => q.type === questionTypeFilter);
-    }
-
-    // Search query within questions
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase();
-      list = list.filter(
-        (item) =>
-          item.question_text.toLowerCase().includes(q) ||
-          item.tags.some((t) => t.toLowerCase().includes(q)) ||
-          item.chapter_name.includes(q) ||
-          (item.topic_name && item.topic_name.includes(q))
-      );
-    }
-
-    return list;
+    return filterQuestions(questions, {
+      subject_id: selectedSubject.id,
+      category: selectedCategory,
+      chapter_id: selectedChapter && selectedChapter !== 'all' ? selectedChapter.id : undefined,
+      topic_id: selectedTopicId || undefined,
+      type: questionTypeFilter !== 'all' ? questionTypeFilter : undefined,
+      search: searchQuery.trim() || undefined,
+    });
   }, [questions, selectedSubject, selectedCategory, selectedChapter, selectedTopicId, questionTypeFilter, searchQuery]);
 
   // Filtered Written Questions
   const currentWrittenQuestions = useMemo(() => {
     if (!selectedSubject || !selectedCategory) return [];
 
-    let list = allWrittenQuestions.filter(
-      (q) => q.subject_id === selectedSubject.id || (q.subject_name && q.subject_name.includes(selectedSubject.bangla_name))
-    );
-
-    // Apply category filter
-    const categoryMatched = list.filter((q) => matchesCategory(q as any, selectedCategory));
-    if (categoryMatched.length > 0) {
-      list = categoryMatched;
-    }
-
-    // Apply chapter filter
-    if (selectedChapter && selectedChapter !== 'all') {
-      const chapterMatched = list.filter(
-        (q) =>
-          q.chapter_id === selectedChapter.id ||
-          (q.chapter_name && selectedChapter.bangla_name && (
-            q.chapter_name.includes(selectedChapter.bangla_name) ||
-            selectedChapter.bangla_name.includes(q.chapter_name)
-          ))
-      );
-      list = chapterMatched;
-
-      if (selectedTopicId) {
-        const subtopic = selectedChapter.subtopics?.find((st) => st.id === selectedTopicId);
-        const subtopicName = subtopic?.bangla_name || '';
-
-        const topicMatched = list.filter(
-          (q) =>
-            q.topic_id === selectedTopicId ||
-            (subtopicName && q.topic_name?.includes(subtopicName)) ||
-            (subtopicName && subtopicName.includes(q.topic_name || '')) ||
-            (subtopicName && q.tags?.some((t) => t.includes(subtopicName)))
-        );
-        list = topicMatched;
-      }
-    }
-
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase();
-      list = list.filter(
-        (item) =>
-          item.question_text.toLowerCase().includes(q) ||
-          item.explanation.toLowerCase().includes(q) ||
-          item.tags.some((t) => t.toLowerCase().includes(q)) ||
-          item.chapter_name.includes(q) ||
-          (item.topic_name && item.topic_name.includes(q))
-      );
-    }
-
-    return list;
+    return filterQuestions(allWrittenQuestions, {
+      subject_id: selectedSubject.id,
+      category: selectedCategory,
+      chapter_id: selectedChapter && selectedChapter !== 'all' ? selectedChapter.id : undefined,
+      topic_id: selectedTopicId || undefined,
+      search: searchQuery.trim() || undefined,
+    });
   }, [allWrittenQuestions, selectedSubject, selectedCategory, selectedChapter, selectedTopicId, searchQuery]);
   // ==========================================
   // SERVER-DRIVEN TANSTACK REACT QUERY HOOKS
