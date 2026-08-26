@@ -664,6 +664,11 @@ export function formatRowToTopic(row: any): TopicRecord {
     completed_questions: Number(row.completed_questions) || 0,
     mcq_count: Number(row.mcq_count) || 0,
     written_count: Number(row.written_count) || 0,
+    varsity_a_count: Number(row.varsity_a_count) || 0,
+    engineering_count: Number(row.engineering_count) || 0,
+    medical_count: Number(row.medical_count) || 0,
+    academic_count: Number(row.academic_count) || 0,
+    main_book_count: Number(row.main_book_count) || 0,
     exam_occurrences,
     key_points,
     created_at: Number(row.created_at) || undefined,
@@ -754,6 +759,11 @@ export async function insertTopic(t: Partial<TopicRecord>): Promise<TopicRecord>
     completed_questions: Number(t.completed_questions) || 0,
     mcq_count: Number(t.mcq_count) || 0,
     written_count: Number(t.written_count) || 0,
+    varsity_a_count: Number(t.varsity_a_count) || 0,
+    engineering_count: Number(t.engineering_count) || 0,
+    medical_count: Number(t.medical_count) || 0,
+    academic_count: Number(t.academic_count) || 0,
+    main_book_count: Number(t.main_book_count) || 0,
     exam_occurrences: t.exam_occurrences,
     key_points: t.key_points,
     created_at: Date.now(),
@@ -765,8 +775,9 @@ export async function insertTopic(t: Partial<TopicRecord>): Promise<TopicRecord>
     `INSERT INTO topics (
       id, chapter_id, subject_id, paper, topic_code, name, bangla_name,
       star_rating, total_questions, completed_questions, mcq_count, written_count,
+      varsity_a_count, engineering_count, medical_count, academic_count, main_book_count,
       exam_occurrences, key_points, created_at
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
     ON CONFLICT (id) DO UPDATE SET
       chapter_id = EXCLUDED.chapter_id,
       subject_id = EXCLUDED.subject_id,
@@ -779,6 +790,11 @@ export async function insertTopic(t: Partial<TopicRecord>): Promise<TopicRecord>
       completed_questions = EXCLUDED.completed_questions,
       mcq_count = EXCLUDED.mcq_count,
       written_count = EXCLUDED.written_count,
+      varsity_a_count = EXCLUDED.varsity_a_count,
+      engineering_count = EXCLUDED.engineering_count,
+      medical_count = EXCLUDED.medical_count,
+      academic_count = EXCLUDED.academic_count,
+      main_book_count = EXCLUDED.main_book_count,
       exam_occurrences = EXCLUDED.exam_occurrences,
       key_points = EXCLUDED.key_points`,
     [
@@ -794,6 +810,11 @@ export async function insertTopic(t: Partial<TopicRecord>): Promise<TopicRecord>
       item.completed_questions,
       item.mcq_count,
       item.written_count,
+      item.varsity_a_count || 0,
+      item.engineering_count || 0,
+      item.medical_count || 0,
+      item.academic_count || 0,
+      item.main_book_count || 0,
       item.exam_occurrences ? JSON.stringify(item.exam_occurrences) : null,
       item.key_points ? JSON.stringify(item.key_points) : null,
       item.created_at,
@@ -820,8 +841,10 @@ export async function updateTopicInDb(id: string, t: Partial<TopicRecord>): Prom
       chapter_id = $1, subject_id = $2, paper = $3, topic_code = $4,
       name = $5, bangla_name = $6, star_rating = $7, total_questions = $8,
       completed_questions = $9, mcq_count = $10, written_count = $11,
-      exam_occurrences = $12, key_points = $13
-    WHERE id = $14`,
+      varsity_a_count = $12, engineering_count = $13, medical_count = $14,
+      academic_count = $15, main_book_count = $16,
+      exam_occurrences = $17, key_points = $18
+    WHERE id = $19`,
     [
       updated.chapter_id,
       updated.subject_id || null,
@@ -834,6 +857,11 @@ export async function updateTopicInDb(id: string, t: Partial<TopicRecord>): Prom
       updated.completed_questions,
       updated.mcq_count,
       updated.written_count,
+      updated.varsity_a_count || 0,
+      updated.engineering_count || 0,
+      updated.medical_count || 0,
+      updated.academic_count || 0,
+      updated.main_book_count || 0,
       updated.exam_occurrences ? JSON.stringify(updated.exam_occurrences) : null,
       updated.key_points ? JSON.stringify(updated.key_points) : null,
       id,
@@ -848,6 +876,293 @@ export async function deleteTopicFromDb(id: string): Promise<boolean> {
   await query('DELETE FROM topics WHERE id = $1', [id]);
   return true;
 }
+
+// ---------------- 4-LAYER COUNTER & HEAL SYSTEM ----------------
+
+export async function recalculateTopicCounts(targetTopicId?: string): Promise<void> {
+  try {
+    if (isPostgresActive()) {
+      if (targetTopicId) {
+        await query(`
+          UPDATE topics t
+          SET 
+            mcq_count = (SELECT COUNT(*) FROM questions q WHERE q.topic_id = t.id AND (q.is_active IS NULL OR q.is_active = TRUE)),
+            written_count = (SELECT COUNT(*) FROM written_questions wq WHERE wq.topic_id = t.id AND (wq.is_active IS NULL OR wq.is_active = TRUE)),
+            varsity_a_count = (
+              (SELECT COUNT(*) FROM questions q WHERE q.topic_id = t.id AND (q.is_active IS NULL OR q.is_active = TRUE) AND (q.category = 'varsity_a' OR q.tags ILIKE '%varsity_a%')) +
+              (SELECT COUNT(*) FROM written_questions wq WHERE wq.topic_id = t.id AND (wq.is_active IS NULL OR wq.is_active = TRUE) AND (wq.category = 'varsity_a' OR wq.tags ILIKE '%varsity_a%'))
+            ),
+            engineering_count = (
+              (SELECT COUNT(*) FROM questions q WHERE q.topic_id = t.id AND (q.is_active IS NULL OR q.is_active = TRUE) AND (q.category = 'engineering' OR q.tags ILIKE '%engineering%' OR q.tags ILIKE '%buet%')) +
+              (SELECT COUNT(*) FROM written_questions wq WHERE wq.topic_id = t.id AND (wq.is_active IS NULL OR wq.is_active = TRUE) AND (wq.category = 'engineering' OR wq.tags ILIKE '%engineering%' OR wq.tags ILIKE '%buet%'))
+            ),
+            medical_count = (
+              (SELECT COUNT(*) FROM questions q WHERE q.topic_id = t.id AND (q.is_active IS NULL OR q.is_active = TRUE) AND (q.category = 'medical' OR q.tags ILIKE '%medical%' OR q.tags ILIKE '%mat%')) +
+              (SELECT COUNT(*) FROM written_questions wq WHERE wq.topic_id = t.id AND (wq.is_active IS NULL OR wq.is_active = TRUE) AND (wq.category = 'medical' OR wq.tags ILIKE '%medical%' OR wq.tags ILIKE '%mat%'))
+            ),
+            academic_count = (
+              (SELECT COUNT(*) FROM questions q WHERE q.topic_id = t.id AND (q.is_active IS NULL OR q.is_active = TRUE) AND (q.category = 'academic' OR q.tags ILIKE '%academic%' OR q.tags ILIKE '%hsc%' OR q.tags ILIKE '%board%')) +
+              (SELECT COUNT(*) FROM written_questions wq WHERE wq.topic_id = t.id AND (wq.is_active IS NULL OR wq.is_active = TRUE) AND (wq.category = 'academic' OR wq.tags ILIKE '%academic%' OR wq.tags ILIKE '%hsc%' OR wq.tags ILIKE '%board%'))
+            ),
+            main_book_count = (
+              (SELECT COUNT(*) FROM questions q WHERE q.topic_id = t.id AND (q.is_active IS NULL OR q.is_active = TRUE) AND (q.category = 'main_book' OR q.tags ILIKE '%main_book%')) +
+              (SELECT COUNT(*) FROM written_questions wq WHERE wq.topic_id = t.id AND (wq.is_active IS NULL OR wq.is_active = TRUE) AND (wq.category = 'main_book' OR wq.tags ILIKE '%main_book%'))
+            ),
+            total_questions = (
+              (SELECT COUNT(*) FROM questions q WHERE q.topic_id = t.id AND (q.is_active IS NULL OR q.is_active = TRUE)) +
+              (SELECT COUNT(*) FROM written_questions wq WHERE wq.topic_id = t.id AND (wq.is_active IS NULL OR wq.is_active = TRUE))
+            )
+          WHERE t.id = $1
+        `, [targetTopicId]);
+      } else {
+        await query(`
+          WITH q_stats AS (
+            SELECT 
+              topic_id,
+              COUNT(*) AS mcq_cnt,
+              COUNT(*) FILTER (WHERE category = 'varsity_a' OR tags ILIKE '%varsity_a%') AS va_cnt,
+              COUNT(*) FILTER (WHERE category = 'engineering' OR tags ILIKE '%engineering%' OR tags ILIKE '%buet%') AS eng_cnt,
+              COUNT(*) FILTER (WHERE category = 'medical' OR tags ILIKE '%medical%' OR tags ILIKE '%mat%') AS med_cnt,
+              COUNT(*) FILTER (WHERE category = 'academic' OR tags ILIKE '%academic%' OR tags ILIKE '%hsc%' OR tags ILIKE '%board%') AS acad_cnt,
+              COUNT(*) FILTER (WHERE category = 'main_book' OR tags ILIKE '%main_book%') AS mb_cnt
+            FROM questions
+            WHERE topic_id IS NOT NULL AND (is_active IS NULL OR is_active = TRUE)
+            GROUP BY topic_id
+          ),
+          wq_stats AS (
+            SELECT 
+              topic_id,
+              COUNT(*) AS wq_cnt,
+              COUNT(*) FILTER (WHERE category = 'varsity_a' OR tags ILIKE '%varsity_a%') AS va_cnt,
+              COUNT(*) FILTER (WHERE category = 'engineering' OR tags ILIKE '%engineering%' OR tags ILIKE '%buet%') AS eng_cnt,
+              COUNT(*) FILTER (WHERE category = 'medical' OR tags ILIKE '%medical%' OR tags ILIKE '%mat%') AS med_cnt,
+              COUNT(*) FILTER (WHERE category = 'academic' OR tags ILIKE '%academic%' OR tags ILIKE '%hsc%' OR tags ILIKE '%board%') AS acad_cnt,
+              COUNT(*) FILTER (WHERE category = 'main_book' OR tags ILIKE '%main_book%') AS mb_cnt
+            FROM written_questions
+            WHERE topic_id IS NOT NULL AND (is_active IS NULL OR is_active = TRUE)
+            GROUP BY topic_id
+          )
+          UPDATE topics t
+          SET 
+            mcq_count = COALESCE(q.mcq_cnt, 0),
+            written_count = COALESCE(w.wq_cnt, 0),
+            total_questions = COALESCE(q.mcq_cnt, 0) + COALESCE(w.wq_cnt, 0),
+            varsity_a_count = COALESCE(q.va_cnt, 0) + COALESCE(w.va_cnt, 0),
+            engineering_count = COALESCE(q.eng_cnt, 0) + COALESCE(w.eng_cnt, 0),
+            medical_count = COALESCE(q.med_cnt, 0) + COALESCE(w.med_cnt, 0),
+            academic_count = COALESCE(q.acad_cnt, 0) + COALESCE(w.acad_cnt, 0),
+            main_book_count = COALESCE(q.mb_cnt, 0) + COALESCE(w.mb_cnt, 0)
+          FROM (
+            SELECT 
+              COALESCE(q.topic_id, w.topic_id) AS topic_id,
+              q.mcq_cnt,
+              w.wq_cnt,
+              q.va_cnt,
+              w.va_cnt,
+              q.eng_cnt,
+              w.eng_cnt,
+              q.med_cnt,
+              w.med_cnt,
+              q.acad_cnt,
+              w.acad_cnt,
+              q.mb_cnt,
+              w.mb_cnt
+            FROM q_stats q
+            FULL OUTER JOIN wq_stats w ON q.topic_id = w.topic_id
+          ) combined
+          WHERE t.id = combined.topic_id
+        `);
+      }
+    }
+  } catch (err) {
+    console.error('Error recalculating topic counts in DB:', err);
+  }
+
+  // Synchronize in-memory fallback
+  for (const [tId, topic] of memoryStore.topics.entries()) {
+    if (targetTopicId && tId !== targetTopicId) continue;
+    let mcq = 0;
+    let wq = 0;
+    let va = 0;
+    let eng = 0;
+    let med = 0;
+    let acad = 0;
+    let mb = 0;
+
+    for (const q of memoryStore.questions.values()) {
+      if (q.topic_id === tId && ((q as any).is_active === undefined || (q as any).is_active === true)) {
+        mcq++;
+        const cat = q.category || '';
+        const tagsStr = (q.tags || []).join(' ').toLowerCase();
+        if (cat === 'varsity_a' || tagsStr.includes('varsity_a')) va++;
+        if (cat === 'engineering' || tagsStr.includes('engineering') || tagsStr.includes('buet')) eng++;
+        if (cat === 'medical' || tagsStr.includes('medical') || tagsStr.includes('mat')) med++;
+        if (cat === 'academic' || tagsStr.includes('academic') || tagsStr.includes('hsc') || tagsStr.includes('board')) acad++;
+        if (cat === 'main_book' || tagsStr.includes('main_book')) mb++;
+      }
+    }
+
+    for (const w of memoryStore.writtenQuestions.values()) {
+      if (w.topic_id === tId && ((w as any).is_active === undefined || (w as any).is_active === true)) {
+        wq++;
+        const cat = w.category || '';
+        const tagsStr = (w.tags || []).join(' ').toLowerCase();
+        if (cat === 'varsity_a' || tagsStr.includes('varsity_a')) va++;
+        if (cat === 'engineering' || tagsStr.includes('engineering') || tagsStr.includes('buet')) eng++;
+        if (cat === 'medical' || tagsStr.includes('medical') || tagsStr.includes('mat')) med++;
+        if (cat === 'academic' || tagsStr.includes('academic') || tagsStr.includes('hsc') || tagsStr.includes('board')) acad++;
+        if (cat === 'main_book' || tagsStr.includes('main_book')) mb++;
+      }
+    }
+
+    topic.mcq_count = mcq;
+    topic.written_count = wq;
+    topic.total_questions = mcq + wq;
+    topic.varsity_a_count = va;
+    topic.engineering_count = eng;
+    topic.medical_count = med;
+    topic.academic_count = acad;
+    topic.main_book_count = mb;
+  }
+}
+
+export async function healAndSyncDatabase(): Promise<{
+  success: boolean;
+  message: string;
+  totalMcqNormalized: number;
+  totalWrittenNormalized: number;
+  totalTopicsCounted: number;
+  unmappedMcqCount: number;
+  unmappedWrittenCount: number;
+  topicsStats: Array<{
+    id: string;
+    name: string;
+    total_questions: number;
+    mcq_count: number;
+    written_count: number;
+    varsity_a_count: number;
+    engineering_count: number;
+    medical_count: number;
+    academic_count: number;
+    main_book_count: number;
+  }>;
+}> {
+  let totalMcqNormalized = 0;
+  let totalWrittenNormalized = 0;
+  let unmappedMcqCount = 0;
+  let unmappedWrittenCount = 0;
+
+  // Load all available topics for matching
+  const allTopics = await getAllTopics();
+  const topicMapById = new Map<string, TopicRecord>();
+  const topicMapByName = new Map<string, TopicRecord>();
+
+  for (const t of allTopics) {
+    topicMapById.set(t.id, t);
+    if (t.name) topicMapByName.set(t.name.trim().toLowerCase(), t);
+    if (t.bangla_name) topicMapByName.set(t.bangla_name.trim().toLowerCase(), t);
+  }
+
+  // 1. Normalize and resolve MCQ Questions
+  const allMcqsRes = await getAllQuestions({ limit: 10000 });
+  for (const q of allMcqsRes.questions) {
+    let modified = false;
+    let targetTopicId = q.topic_id;
+    let targetTopicName = q.topic_name;
+
+    if (!targetTopicId && targetTopicName) {
+      const matched = topicMapByName.get(targetTopicName.trim().toLowerCase());
+      if (matched) {
+        targetTopicId = matched.id;
+        targetTopicName = matched.bangla_name || matched.name;
+        modified = true;
+      }
+    } else if (targetTopicId && topicMapById.has(targetTopicId)) {
+      const matched = topicMapById.get(targetTopicId)!;
+      if (!targetTopicName || targetTopicName !== (matched.bangla_name || matched.name)) {
+        targetTopicName = matched.bangla_name || matched.name;
+        modified = true;
+      }
+    }
+
+    if (!targetTopicId) {
+      unmappedMcqCount++;
+    }
+
+    if (modified) {
+      await updateQuestionInDb(q.id, {
+        topic_id: targetTopicId,
+        topic_name: targetTopicName,
+      });
+      totalMcqNormalized++;
+    }
+  }
+
+  // 2. Normalize and resolve Written Questions
+  const allWrittenRes = await getAllWrittenQuestions({ limit: 10000 });
+  for (const w of allWrittenRes.questions) {
+    let modified = false;
+    let targetTopicId = w.topic_id;
+    let targetTopicName = w.topic_name;
+
+    if (!targetTopicId && targetTopicName) {
+      const matched = topicMapByName.get(targetTopicName.trim().toLowerCase());
+      if (matched) {
+        targetTopicId = matched.id;
+        targetTopicName = matched.bangla_name || matched.name;
+        modified = true;
+      }
+    } else if (targetTopicId && topicMapById.has(targetTopicId)) {
+      const matched = topicMapById.get(targetTopicId)!;
+      if (!targetTopicName || targetTopicName !== (matched.bangla_name || matched.name)) {
+        targetTopicName = matched.bangla_name || matched.name;
+        modified = true;
+      }
+    }
+
+    if (!targetTopicId) {
+      unmappedWrittenCount++;
+    }
+
+    if (modified) {
+      await updateWrittenQuestionInDb(w.id, {
+        topic_id: targetTopicId,
+        topic_name: targetTopicName,
+      });
+      totalWrittenNormalized++;
+    }
+  }
+
+  // 3. Recalculate all topic counts dynamically
+  await recalculateTopicCounts();
+
+  // 4. Return summary
+  const updatedTopics = await getAllTopics();
+  const topicsStats = updatedTopics.map((t) => ({
+    id: t.id,
+    name: t.bangla_name || t.name,
+    total_questions: t.total_questions || 0,
+    mcq_count: t.mcq_count || 0,
+    written_count: t.written_count || 0,
+    varsity_a_count: t.varsity_a_count || 0,
+    engineering_count: t.engineering_count || 0,
+    medical_count: t.medical_count || 0,
+    academic_count: t.academic_count || 0,
+    main_book_count: t.main_book_count || 0,
+  }));
+
+  return {
+    success: true,
+    message: `Database synchronization complete. ${totalMcqNormalized} MCQs and ${totalWrittenNormalized} Written questions verified and mapped.`,
+    totalMcqNormalized,
+    totalWrittenNormalized,
+    totalTopicsCounted: updatedTopics.length,
+    unmappedMcqCount,
+    unmappedWrittenCount,
+    topicsStats,
+  };
+}
+
 
 // ---------------- QUESTIONS ----------------
 
@@ -928,236 +1243,6 @@ export function encodeCursor(created_at?: number, id?: string): string | null {
   return Buffer.from(JSON.stringify({ created_at: created_at || Date.now(), id })).toString('base64');
 }
 
-export interface FacetedFilterCounts {
-  total: number;
-  mcqCount: number;
-  writtenCount: number;
-  byCategory: {
-    engineering: number;
-    medical: number;
-    varsity_a: number;
-    academic: number;
-    main_book: number;
-    [key: string]: number;
-  };
-  byDifficulty: {
-    easy: number;
-    medium: number;
-    hard: number;
-  };
-  byPaper: {
-    '1st': number;
-    '2nd': number;
-    [key: string]: number;
-  };
-  byTopic: Record<string, number>;
-  byChapter: Record<string, number>;
-}
-
-export async function getQuestionFacetedCounts(filters?: {
-  subject_id?: string;
-  chapter_id?: string;
-  topic_id?: string;
-  paper?: string;
-  category?: string;
-  difficulty?: string;
-  tag?: string;
-  search?: string;
-}): Promise<FacetedFilterCounts> {
-  const result: FacetedFilterCounts = {
-    total: 0,
-    mcqCount: 0,
-    writtenCount: 0,
-    byCategory: {
-      engineering: 0,
-      medical: 0,
-      varsity_a: 0,
-      academic: 0,
-      main_book: 0,
-    },
-    byDifficulty: {
-      easy: 0,
-      medium: 0,
-      hard: 0,
-    },
-    byPaper: {
-      '1st': 0,
-      '2nd': 0,
-    },
-    byTopic: {},
-    byChapter: {},
-  };
-
-  try {
-    let whereClause = ' WHERE (is_active IS NULL OR is_active = TRUE)';
-    const params: any[] = [];
-    let pIdx = 1;
-
-    if (filters?.subject_id) {
-      whereClause += ` AND subject_id = $${pIdx++}`;
-      params.push(filters.subject_id);
-    }
-    if (filters?.chapter_id) {
-      whereClause += ` AND chapter_id = $${pIdx++}`;
-      params.push(filters.chapter_id);
-    }
-    if (filters?.topic_id) {
-      whereClause += ` AND topic_id = $${pIdx++}`;
-      params.push(filters.topic_id);
-    }
-    if (filters?.paper) {
-      whereClause += ` AND paper = $${pIdx++}`;
-      params.push(filters.paper);
-    }
-    if (filters?.category) {
-      whereClause += ` AND (primary_category = $${pIdx++} OR category = $${pIdx++} OR tags @> ARRAY[$${pIdx++}]::text[] OR tags ILIKE $${pIdx++})`;
-      params.push(filters.category, filters.category, filters.category, `%"${filters.category}"%`);
-    }
-    if (filters?.difficulty) {
-      whereClause += ` AND difficulty = $${pIdx++}`;
-      params.push(filters.difficulty);
-    }
-    if (filters?.tag) {
-      whereClause += ` AND (tags @> ARRAY[$${pIdx++}]::text[] OR tags ILIKE $${pIdx++})`;
-      params.push(filters.tag, `%"${filters.tag}"%`);
-    }
-    if (filters?.search && filters.search.trim()) {
-      const cleanTerm = filters.search.trim();
-      whereClause += ` AND (
-        search_vector @@ plainto_tsquery('simple', $${pIdx++}) OR
-        question_text ILIKE $${pIdx++} OR
-        explanation ILIKE $${pIdx++} OR
-        chapter_name ILIKE $${pIdx++} OR
-        topic_name ILIKE $${pIdx++}
-      )`;
-      const termPattern = `%${cleanTerm}%`;
-      params.push(cleanTerm, termPattern, termPattern, termPattern, termPattern);
-    }
-
-    // MCQ Aggregate Query
-    const mcqStatsSql = `
-      SELECT 
-        COUNT(*) as total,
-        COALESCE(type, 'mcq') as type,
-        COALESCE(primary_category, category, 'varsity_a') as category,
-        COALESCE(difficulty, 'medium') as difficulty,
-        COALESCE(paper, '1st') as paper,
-        chapter_id,
-        topic_id
-      FROM questions
-      ${whereClause}
-      GROUP BY type, COALESCE(primary_category, category, 'varsity_a'), difficulty, paper, chapter_id, topic_id
-    `;
-    const mcqRes = await query(mcqStatsSql, params);
-
-    if (mcqRes && mcqRes.rows) {
-      for (const row of mcqRes.rows) {
-        const c = Number(row.total) || 0;
-        result.total += c;
-        if (row.type === 'written') {
-          result.writtenCount += c;
-        } else {
-          result.mcqCount += c;
-        }
-
-        const cat = row.category;
-        if (cat) {
-          result.byCategory[cat] = (result.byCategory[cat] || 0) + c;
-        }
-
-        const diff = row.difficulty as 'easy' | 'medium' | 'hard';
-        if (diff && result.byDifficulty[diff] !== undefined) {
-          result.byDifficulty[diff] += c;
-        }
-
-        const pap = row.paper;
-        if (pap) {
-          result.byPaper[pap] = (result.byPaper[pap] || 0) + c;
-        }
-
-        if (row.chapter_id) {
-          result.byChapter[row.chapter_id] = (result.byChapter[row.chapter_id] || 0) + c;
-        }
-
-        if (row.topic_id) {
-          result.byTopic[row.topic_id] = (result.byTopic[row.topic_id] || 0) + c;
-        }
-      }
-    }
-
-    // Written Questions Count
-    let wWhereClause = ' WHERE is_active = TRUE';
-    const wParams: any[] = [];
-    let wIdx = 1;
-
-    if (filters?.subject_id) {
-      wWhereClause += ` AND subject_id = $${wIdx++}`;
-      wParams.push(filters.subject_id);
-    }
-    if (filters?.chapter_id) {
-      wWhereClause += ` AND chapter_id = $${wIdx++}`;
-      wParams.push(filters.chapter_id);
-    }
-    if (filters?.topic_id) {
-      wWhereClause += ` AND topic_id = $${wIdx++}`;
-      wParams.push(filters.topic_id);
-    }
-    if (filters?.paper) {
-      wWhereClause += ` AND paper = $${wIdx++}`;
-      wParams.push(filters.paper);
-    }
-    if (filters?.category) {
-      wWhereClause += ` AND (category = $${wIdx++} OR tags ILIKE $${wIdx++})`;
-      wParams.push(filters.category, `%"${filters.category}"%`);
-    }
-
-    const wRes = await query(`SELECT COUNT(*) as w_total FROM written_questions ${wWhereClause}`, wParams);
-    if (wRes && wRes.rows && wRes.rows[0]) {
-      const wCount = Number(wRes.rows[0].w_total) || 0;
-      result.writtenCount += wCount;
-      result.total += wCount;
-    }
-
-    return result;
-  } catch (err) {
-    // In-memory fallback calculation
-    const allQ = Array.from(memoryStore.questions.values()).filter((q: any) => q.is_active !== false);
-    for (const q of allQ) {
-      if (filters?.subject_id && q.subject_id !== filters.subject_id) continue;
-      if (filters?.chapter_id && q.chapter_id !== filters.chapter_id) continue;
-      if (filters?.topic_id && q.topic_id !== filters.topic_id) continue;
-      if (filters?.paper && q.paper !== filters.paper) continue;
-
-      result.total++;
-      if (q.type === 'written') {
-        result.writtenCount++;
-      } else {
-        result.mcqCount++;
-      }
-
-      const cat = q.category || 'varsity_a';
-      result.byCategory[cat] = (result.byCategory[cat] || 0) + 1;
-
-      const diff = (q.difficulty || 'medium') as 'easy' | 'medium' | 'hard';
-      if (result.byDifficulty[diff] !== undefined) {
-        result.byDifficulty[diff]++;
-      }
-
-      const pap = q.paper || '1st';
-      result.byPaper[pap] = (result.byPaper[pap] || 0) + 1;
-
-      if (q.chapter_id) {
-        result.byChapter[q.chapter_id] = (result.byChapter[q.chapter_id] || 0) + 1;
-      }
-      if (q.topic_id) {
-        result.byTopic[q.topic_id] = (result.byTopic[q.topic_id] || 0) + 1;
-      }
-    }
-
-    return result;
-  }
-}
-
 export async function getAllQuestions(filters?: {
   subject_id?: string;
   chapter_id?: string;
@@ -1171,7 +1256,7 @@ export async function getAllQuestions(filters?: {
   cursor?: string;
   page?: number;
   limit?: number;
-}): Promise<PaginatedQuestionsResult & { facets?: FacetedFilterCounts }> {
+}): Promise<PaginatedQuestionsResult> {
   const page = Math.max(1, filters?.page || 1);
   const limit = filters?.limit ? Math.max(1, filters.limit) : 0;
   const cursorData = decodeCursor(filters?.cursor);
@@ -1203,29 +1288,21 @@ export async function getAllQuestions(filters?: {
       params.push(filters.paper);
     }
     if (filters?.category) {
-      whereClause += ` AND (primary_category = $${pIdx++} OR category = $${pIdx++} OR tags @> ARRAY[$${pIdx++}]::text[] OR tags ILIKE $${pIdx++})`;
-      params.push(filters.category, filters.category, filters.category, `%"${filters.category}"%`);
+      whereClause += ` AND (category = $${pIdx++} OR tags ILIKE $${pIdx++})`;
+      params.push(filters.category, `%${filters.category}%`);
     }
     if (filters?.difficulty) {
       whereClause += ` AND difficulty = $${pIdx++}`;
       params.push(filters.difficulty);
     }
     if (filters?.tag) {
-      // High-precision exact tag matching utilizing GIN / containment
-      whereClause += ` AND (tags @> ARRAY[$${pIdx++}]::text[] OR tags ILIKE $${pIdx++})`;
-      params.push(filters.tag, `%"${filters.tag}"%`);
+      whereClause += ` AND tags ILIKE $${pIdx++}`;
+      params.push(`%${filters.tag}%`);
     }
-    if (filters?.search && filters.search.trim()) {
-      const cleanTerm = filters.search.trim();
-      whereClause += ` AND (
-        search_vector @@ plainto_tsquery('simple', $${pIdx++}) OR
-        question_text ILIKE $${pIdx++} OR
-        explanation ILIKE $${pIdx++} OR
-        chapter_name ILIKE $${pIdx++} OR
-        topic_name ILIKE $${pIdx++}
-      )`;
-      const termPattern = `%${cleanTerm}%`;
-      params.push(cleanTerm, termPattern, termPattern, termPattern, termPattern);
+    if (filters?.search) {
+      const term = `%${filters.search}%`;
+      whereClause += ` AND (question_text ILIKE $${pIdx++} OR explanation ILIKE $${pIdx++} OR tags ILIKE $${pIdx++} OR chapter_name ILIKE $${pIdx++} OR topic_name ILIKE $${pIdx++})`;
+      params.push(term, term, term, term, term);
     }
 
     // 1. Total count query
@@ -2782,22 +2859,21 @@ export async function getAllWrittenQuestions(filters?: {
       params.push(filters.paper);
     }
     if (filters?.category) {
-      whereClause += ` AND (category = $${pIdx++} OR tags @> ARRAY[$${pIdx++}]::text[] OR tags ILIKE $${pIdx++})`;
-      params.push(filters.category, filters.category, `%"${filters.category}"%`);
+      whereClause += ` AND (category = $${pIdx++} OR tags ILIKE $${pIdx++})`;
+      params.push(filters.category, `%${filters.category}%`);
     }
     if (filters?.difficulty) {
       whereClause += ` AND difficulty = $${pIdx++}`;
       params.push(filters.difficulty);
     }
     if (filters?.tag) {
-      whereClause += ` AND (tags @> ARRAY[$${pIdx++}]::text[] OR tags ILIKE $${pIdx++})`;
-      params.push(filters.tag, `%"${filters.tag}"%`);
+      whereClause += ` AND tags ILIKE $${pIdx++}`;
+      params.push(`%${filters.tag}%`);
     }
-    if (filters?.search && filters.search.trim()) {
-      const cleanTerm = filters.search.trim();
-      whereClause += ` AND (question_text ILIKE $${pIdx++} OR explanation ILIKE $${pIdx++} OR chapter_name ILIKE $${pIdx++} OR topic_name ILIKE $${pIdx++})`;
-      const termPattern = `%${cleanTerm}%`;
-      params.push(termPattern, termPattern, termPattern, termPattern);
+    if (filters?.search) {
+      const term = `%${filters.search}%`;
+      whereClause += ` AND (question_text ILIKE $${pIdx++} OR explanation ILIKE $${pIdx++} OR tags ILIKE $${pIdx++} OR chapter_name ILIKE $${pIdx++} OR topic_name ILIKE $${pIdx++})`;
+      params.push(term, term, term, term, term);
     }
 
     // 1. Get total count

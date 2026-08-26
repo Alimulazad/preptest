@@ -47,32 +47,6 @@ export interface WrittenQuestionsPaginatedResponse {
   totalPages?: number;
 }
 
-export interface FacetedFilterCounts {
-  total: number;
-  mcqCount: number;
-  writtenCount: number;
-  byCategory: {
-    engineering: number;
-    medical: number;
-    varsity_a: number;
-    academic: number;
-    main_book: number;
-    [key: string]: number;
-  };
-  byDifficulty: {
-    easy: number;
-    medium: number;
-    hard: number;
-  };
-  byPaper: {
-    '1st': number;
-    '2nd': number;
-    [key: string]: number;
-  };
-  byTopic: Record<string, number>;
-  byChapter: Record<string, number>;
-}
-
 export interface QuestionFilters {
   subject_id?: string;
   chapter_id?: string;
@@ -86,7 +60,6 @@ export interface QuestionFilters {
   cursor?: string;
   page?: number;
   limit?: number;
-  include_facets?: boolean;
 }
 
 export interface QuestionsPaginatedResponse {
@@ -97,7 +70,6 @@ export interface QuestionsPaginatedResponse {
   page?: number;
   limit?: number;
   totalPages?: number;
-  facets?: FacetedFilterCounts;
 }
 
 export type CreateWrittenQuestionInput = Omit<WrittenQuestion, 'id' | 'created_at' | 'updated_at'> & {
@@ -196,6 +168,11 @@ export interface TopicRecord extends SubTopic {
   subject_id?: string;
   paper?: string;
   created_at?: number;
+  varsity_a_count?: number;
+  medical_count?: number;
+  engineering_count?: number;
+  academic_count?: number;
+  main_book_count?: number;
 }
 
 export interface Chapter {

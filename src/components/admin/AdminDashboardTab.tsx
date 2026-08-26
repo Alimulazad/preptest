@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   Database,
   HelpCircle,
@@ -18,9 +18,13 @@ import {
   Activity,
   ArrowUpRight,
   ShieldCheck,
+  Wrench,
+  Sliders,
+  AlertCircle,
 } from 'lucide-react';
 import { AdminSystemStats } from '../../types';
 import { AdminSystemHealthWidget } from './AdminSystemHealthWidget';
+import { healAndSyncDatabaseApi } from '../../services/api';
 
 interface AdminDashboardTabProps {
   stats: AdminSystemStats | null;
@@ -35,6 +39,22 @@ export const AdminDashboardTab: React.FC<AdminDashboardTabProps> = ({
   onRefreshStats,
   onNavigateTab,
 }) => {
+  const [isHealingDb, setIsHealingDb] = useState(false);
+  const [healResult, setHealResult] = useState<any | null>(null);
+
+  const handleHealDatabase = async () => {
+    setIsHealingDb(true);
+    setHealResult(null);
+    try {
+      const res = await healAndSyncDatabaseApi();
+      setHealResult(res);
+      onRefreshStats();
+    } catch (err: any) {
+      setHealResult({ success: false, message: err.message || 'হিয়ারিং ব্যর্থ হয়েছে' });
+    } finally {
+      setIsHealingDb(false);
+    }
+  };
   return (
     <div className="space-y-6">
       {/* Top Hero Banner */}
@@ -249,6 +269,52 @@ export const AdminDashboardTab: React.FC<AdminDashboardTabProps> = ({
       <AdminSystemHealthWidget
         onNavigateToKeys={() => onNavigateTab('keys')}
       />
+
+      {/* 4-Layer Database Normalization & Topic Health Sync Tool */}
+      <div className="bg-gradient-to-br from-white to-slate-50 dark:from-slate-900 dark:to-slate-850 p-5 md:p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div className="space-y-1">
+            <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 text-xs font-bold border border-emerald-200 dark:border-emerald-800">
+              <Sparkles className="w-3.5 h-3.5" />
+              ৪-স্তরের (4-Layer) ফিল্টারিং ও টপিক হেলথ সিস্টেম
+            </div>
+            <h3 className="text-base font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
+              <Database className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
+              ডেটাবেজ নরম্যালাইজেশন ও টপিক কাউন্টার অটো-সিঙ্ক
+            </h3>
+            <p className="text-xs text-slate-600 dark:text-slate-400 max-w-2xl leading-relaxed">
+              নামহীন বা অসঙ্গতিপূর্ণ টপিকগুলো স্বয়ংক্রিয়ভাবে ম্যাপ করে, প্রতিটি ক্যাটাগরি ও চ্যাপ্টারের প্রশ্ন সংখ্যা নিখুঁতভাবে রিকাউন্ট করে এবং ফিল্টারিং ১০০% বাগ-মুক্ত রাখে।
+            </p>
+          </div>
+
+          <button
+            type="button"
+            onClick={handleHealDatabase}
+            disabled={isHealingDb}
+            className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-md shadow-emerald-600/20 transition-all cursor-pointer disabled:opacity-50 shrink-0"
+          >
+            <Wrench className={`w-4 h-4 ${isHealingDb ? 'animate-spin' : ''}`} />
+            {isHealingDb ? 'ডেটাবেজ সিঙ্ক হচ্ছে...' : '⚡ ১-ক্লিকে ডেটাবেজ সিঙ্ক ও হিল করুন'}
+          </button>
+        </div>
+
+        {healResult && (
+          <div className={`mt-4 p-4 rounded-xl border text-xs leading-relaxed ${healResult.success ? 'bg-emerald-50/80 border-emerald-200 text-emerald-900 dark:bg-emerald-950/40 dark:border-emerald-800 dark:text-emerald-200' : 'bg-rose-50 border-rose-200 text-rose-900 dark:bg-rose-950/40 dark:border-rose-800 dark:text-rose-200'}`}>
+            <div className="font-bold text-sm mb-1 flex items-center gap-1.5">
+              {healResult.success ? <CheckCircle2 className="w-4 h-4 text-emerald-600" /> : <AlertCircle className="w-4 h-4 text-rose-600" />}
+              {healResult.message}
+            </div>
+            {healResult.success && (
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-2 pt-2 border-t border-emerald-200/60 dark:border-emerald-800/60 text-slate-700 dark:text-slate-300">
+                <div>ম্যাপকৃত MCQ: <span className="font-bold text-emerald-700 dark:text-emerald-400">{healResult.totalMcqNormalized} টি</span></div>
+                <div>ম্যাপকৃত লিখিত: <span className="font-bold text-emerald-700 dark:text-emerald-400">{healResult.totalWrittenNormalized} টি</span></div>
+                <div>মোট সিঙ্ককৃত টপিক: <span className="font-bold text-indigo-700 dark:text-indigo-400">{healResult.totalTopicsCounted} টি</span></div>
+                <div>ম্যাপিং প্রয়োজন: <span className="font-bold text-amber-700 dark:text-amber-400">{healResult.unmappedMcqCount + healResult.unmappedWrittenCount} টি</span></div>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
 
       {/* Quick Action Cards with High Contrast Visual Hierarchy */}
       <div>

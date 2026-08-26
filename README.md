@@ -97,8 +97,14 @@ JACHAI uses **PostgreSQL 16** with automatic in-memory SQLite fallback during lo
 ```
 
 ### Automatic Migration Runner (`/server/migrations.ts`)
-- Schema changes are versioned and executed automatically on startup inside atomic transactions (`001_initial_schema`, `002_add_indexes_and_constraints`).
+- Schema changes are versioned and executed automatically on startup inside atomic transactions (`001_initial_schema` to `006_topics_relational_indices_and_stats`).
 - Failures trigger an instant rollback to maintain database integrity.
+
+### 4-Layer Filtering & Auto-Healing Pipeline
+1. **Layer 1 (Database Single Source of Truth)**: Compound indices `(topic_id, category)` and relational foreign keys ensure instant queries and clean joins.
+2. **Layer 2 (Smart Import Pipeline)**: Auto-resolves topic names to valid topic IDs, preserves custom topic IDs, and supports batch range assignment in the admin panel.
+3. **Layer 3 (Dynamic Recount Engine)**: Auto-synchronizes `mcq_count`, `written_count`, and per-category counts (`varsity_a_count`, `engineering_count`, etc.) with 1-click healing (`POST /api/admin/heal-database`).
+4. **Layer 4 (Frontend State Machine)**: Pure ID-driven hierarchical filtering eliminating UI mismatches or missing questions.
 
 ---
 
@@ -117,6 +123,9 @@ JACHAI uses **PostgreSQL 16** with automatic in-memory SQLite fallback during lo
 | `POST` | `/api/questions` | Admin Only | Create question (Validated with Zod) |
 | `PUT` | `/api/questions/:id` | Admin Only | Update question |
 | `DELETE`| `/api/questions/:id` | Admin Only | Delete question |
+| `GET` | `/api/topics` | Public | List topics with chapter/subject filters |
+| `GET` | `/api/topics/stats` | Public | Aggregated category and question statistics per topic |
+| `POST` | `/api/admin/heal-database` | Admin Only | Auto-normalize topics, verify integrity and recount |
 | `POST` | `/api/ai/chat` | Authenticated (Rate-Limited)| Multi-turn AI academic tutor interaction |
 | `POST` | `/api/ai/solve-photo` | Authenticated (Rate-Limited)| Vision-based question solver |
 
