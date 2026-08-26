@@ -97,7 +97,7 @@ JACHAI uses **PostgreSQL 16** with automatic in-memory SQLite fallback during lo
 ```
 
 ### Automatic Migration Runner (`/server/migrations.ts`)
-- Schema changes are versioned and executed automatically on startup inside atomic transactions (`001_initial_schema` to `006_topics_relational_indices_and_stats`).
+- Schema changes are versioned and executed automatically on startup inside atomic transactions (`001_initial_schema` to `007_relational_hierarchy_and_performance_indices`).
 - Failures trigger an instant rollback to maintain database integrity.
 
 ### 4-Layer Filtering & Auto-Healing Pipeline

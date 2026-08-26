@@ -251,6 +251,62 @@ export const migrations: Migration[] = [
       `);
     },
   },
+  {
+    id: '007_relational_hierarchy_and_performance_indices',
+    name: 'Create subjects, chapters tables and add compound indices for standardized ID filtering',
+    up: async (client: pg.PoolClient) => {
+      await client.query(`
+        -- 1. Create subjects table
+        CREATE TABLE IF NOT EXISTS subjects (
+          id VARCHAR(50) PRIMARY KEY,
+          name VARCHAR(100) NOT NULL,
+          bangla_name VARCHAR(100) NOT NULL,
+          paper VARCHAR(10) NOT NULL,
+          short_code VARCHAR(20),
+          icon_name VARCHAR(50),
+          order_index SMALLINT DEFAULT 0,
+          created_at BIGINT
+        );
+
+        -- 2. Create chapters table
+        CREATE TABLE IF NOT EXISTS chapters (
+          id VARCHAR(50) PRIMARY KEY,
+          subject_id VARCHAR(50) NOT NULL,
+          chapter_number SMALLINT,
+          name VARCHAR(150) NOT NULL,
+          bangla_name VARCHAR(150) NOT NULL,
+          paper VARCHAR(10),
+          total_topics INTEGER DEFAULT 0,
+          created_at BIGINT
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_chapters_subject ON chapters(subject_id);
+
+        -- 3. Add compound indices for ultra-fast multi-dimensional filtering
+        CREATE INDEX IF NOT EXISTS idx_questions_topic_cat ON questions (topic_id, category);
+        CREATE INDEX IF NOT EXISTS idx_written_topic_cat ON written_questions (topic_id, category);
+
+        CREATE INDEX IF NOT EXISTS idx_questions_ch_cat ON questions (chapter_id, category);
+        CREATE INDEX IF NOT EXISTS idx_written_ch_cat ON written_questions (chapter_id, category);
+
+        CREATE INDEX IF NOT EXISTS idx_questions_hierarchy ON questions (subject_id, chapter_id, topic_id, category);
+        CREATE INDEX IF NOT EXISTS idx_written_hierarchy ON written_questions (subject_id, chapter_id, topic_id, category);
+
+        -- 4. Seed Canonical Subjects
+        INSERT INTO subjects (id, name, bangla_name, paper, short_code, icon_name, order_index, created_at)
+        VALUES
+          ('physics_1', 'Physics 1st Paper', 'পদার্থবিজ্ঞান ১ম পত্র', '1st', 'PHY-1', 'Atom', 1, EXTRACT(EPOCH FROM NOW()) * 1000),
+          ('physics_2', 'Physics 2nd Paper', 'পদার্থবিজ্ঞান ২য় পত্র', '2nd', 'PHY-2', 'Zap', 2, EXTRACT(EPOCH FROM NOW()) * 1000),
+          ('chemistry_1', 'Chemistry 1st Paper', 'রসায়ন ১ম পত্র', '1st', 'CHEM-1', 'FlaskConical', 3, EXTRACT(EPOCH FROM NOW()) * 1000),
+          ('chemistry_2', 'Chemistry 2nd Paper', 'রসায়ন ২য় পত্র', '2nd', 'CHEM-2', 'TestTube2', 4, EXTRACT(EPOCH FROM NOW()) * 1000),
+          ('math_1', 'Higher Math 1st Paper', 'উচ্চতর গণিত ১ম পত্র', '1st', 'MATH-1', 'Calculator', 5, EXTRACT(EPOCH FROM NOW()) * 1000),
+          ('math_2', 'Higher Math 2nd Paper', 'উচ্চতর গণিত ২য় পত্র', '2nd', 'MATH-2', 'Sigma', 6, EXTRACT(EPOCH FROM NOW()) * 1000),
+          ('biology_1', 'Biology 1st Paper', 'জীববিজ্ঞান ১ম পত্র', '1st', 'BIO-1', 'Dna', 7, EXTRACT(EPOCH FROM NOW()) * 1000),
+          ('biology_2', 'Biology 2nd Paper', 'জীববিজ্ঞান ২য় পত্র', '2nd', 'BIO-2', 'Bug', 8, EXTRACT(EPOCH FROM NOW()) * 1000)
+        ON CONFLICT (id) DO NOTHING;
+      `);
+    },
+  },
 ];
 
 export async function runMigrations(pool: pg.Pool): Promise<void> {
