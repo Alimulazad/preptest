@@ -457,7 +457,7 @@ export async function syncUserProgressToBackend(progress: UserProgress): Promise
 
 // ---------------- SQLite Question API Operations ----------------
 
-function getFilteredInitialQuestions(filters?: {
+function getFilteredInitialQuestions(_filters?: {
   subject_id?: string;
   chapter_id?: string;
   topic_id?: string;
@@ -466,43 +466,7 @@ function getFilteredInitialQuestions(filters?: {
   search?: string;
   category?: string;
 }): Question[] {
-  let list = INITIAL_QUESTIONS;
-  if (!filters) return list;
-
-  if (filters.subject_id) {
-    list = list.filter((q) => q.subject_id === filters.subject_id);
-  }
-  if (filters.chapter_id) {
-    list = list.filter((q) => q.chapter_id === filters.chapter_id);
-  }
-  if (filters.topic_id) {
-    list = list.filter((q) => q.topic_id === filters.topic_id);
-  }
-  if (filters.paper) {
-    list = list.filter((q) => q.paper === filters.paper);
-  }
-  if (filters.category) {
-    list = list.filter(
-      (q) =>
-        q.category === filters.category ||
-        (q.tags && q.tags.some((t) => t.toLowerCase().includes(filters.category!.toLowerCase())))
-    );
-  }
-  if (filters.tag) {
-    list = list.filter((q) => q.tags && q.tags.some((t) => t.includes(filters.tag!)));
-  }
-  if (filters.search) {
-    const term = filters.search.toLowerCase();
-    list = list.filter(
-      (q) =>
-        q.question_text.toLowerCase().includes(term) ||
-        q.explanation.toLowerCase().includes(term) ||
-        (q.chapter_name && q.chapter_name.toLowerCase().includes(term)) ||
-        (q.topic_name && q.topic_name.toLowerCase().includes(term)) ||
-        (q.tags && q.tags.some((t) => t.toLowerCase().includes(term)))
-    );
-  }
-  return list;
+  return [];
 }
 
 function getFallbackTopics(filters?: {

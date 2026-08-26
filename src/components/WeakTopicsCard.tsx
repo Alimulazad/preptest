@@ -1,7 +1,6 @@
 import React, { useMemo } from 'react';
 import { Sparkles, PenSquare, CheckCircle2, AlertTriangle, ArrowRight, BrainCircuit } from 'lucide-react';
 import { UserProgress, Question } from '../types';
-import { INITIAL_QUESTIONS } from '../data/admissionData';
 
 interface WeakTopicsCardProps {
   progress: UserProgress;
@@ -32,7 +31,7 @@ export const WeakTopicsCard: React.FC<WeakTopicsCardProps> = ({
 
     if (unresolved.length === 0) return [];
 
-    const sourceQuestions = questions && questions.length > 0 ? questions : INITIAL_QUESTIONS;
+    const sourceQuestions = questions && questions.length > 0 ? questions : [];
     const topicMap: { [key: string]: GroupedWeakTopic } = {};
 
     unresolved.forEach((m) => {

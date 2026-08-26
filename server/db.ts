@@ -72,7 +72,7 @@ const memoryStore = {
 
 // Seed in-memory store initially
 function seedMemoryStore() {
-  if (memoryStore.questions.size > 0 && memoryStore.writtenQuestions.size > 0) return;
+  if (memoryStore.topics.size > 0) return;
 
   // 1. Topics
   if (Array.isArray(CHAPTERS_DATA)) {
@@ -88,10 +88,10 @@ function seedMemoryStore() {
             name: st.name,
             bangla_name: st.bangla_name,
             star_rating: (st.star_rating as 1 | 2 | 3) || 3,
-            total_questions: st.total_questions || 0,
-            completed_questions: st.completed_questions || 0,
-            mcq_count: st.mcq_count || 0,
-            written_count: st.written_count || 0,
+            total_questions: 0,
+            completed_questions: 0,
+            mcq_count: 0,
+            written_count: 0,
             exam_occurrences: st.exam_occurrences,
             key_points: st.key_points,
             created_at: Date.now(),
@@ -102,19 +102,7 @@ function seedMemoryStore() {
     }
   }
 
-  // 2. MCQ Questions
-  for (const q of INITIAL_QUESTIONS) {
-    memoryStore.questions.set(q.id, { ...q });
-  }
-
-  // 3. Written Questions
-  if (Array.isArray(INITIAL_WRITTEN_QUESTIONS)) {
-    for (const wq of INITIAL_WRITTEN_QUESTIONS) {
-      memoryStore.writtenQuestions.set(wq.id, { ...wq });
-    }
-  }
-
-  // 3. Snippets
+  // 2. Snippets
   const BASE_KNOWLEDGE_SNIPPETS: KnowledgeSnippet[] = [
     {
       id: 'ks_q1',
@@ -251,10 +239,6 @@ export async function query(text: string, params?: any[]): Promise<pg.QueryResul
       console.warn('[PostgreSQL Query Warn]', err.message);
       return null;
     }
-  }
-  // Log notice in fallback mode for mutation queries
-  if (!isPgConnected && (text.startsWith('INSERT') || text.startsWith('UPDATE') || text.startsWith('DELETE'))) {
-    console.warn('[Database In-Memory Warning] ⚠️ Running in local fallback mode. Changes will not persist in PostgreSQL.');
   }
   return null;
 }
@@ -473,80 +457,6 @@ export async function getDatabase(): Promise<void> {
         );
       }
 
-      // Seed Questions in PG
-      for (const q of memoryStore.questions.values()) {
-        await activePool.query(
-          `INSERT INTO questions (
-            id, subject_id, subject_name, paper, chapter_id, chapter_name,
-            topic_id, topic_name, category, question_text, math_formula_latex,
-            options, correct_ans, explanation, explanation_latex,
-            question_image_url, explanation_image_url,
-            tags, star_rating, type, difficulty, created_at
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
-          ON CONFLICT (id) DO NOTHING`,
-          [
-            q.id,
-            q.subject_id,
-            q.subject_name,
-            q.paper,
-            q.chapter_id,
-            q.chapter_name,
-            q.topic_id || null,
-            q.topic_name || null,
-            q.category || 'varsity_a',
-            q.question_text,
-            q.math_formula_latex || null,
-            JSON.stringify(q.options),
-            q.correct_ans,
-            q.explanation,
-            q.explanation_latex || null,
-            q.question_image_url || null,
-            q.explanation_image_url || null,
-            JSON.stringify(q.tags || []),
-            q.star_rating || 3,
-            q.type || 'mcq',
-            q.difficulty || 'medium',
-            Date.now(),
-          ]
-        );
-      }
-
-      // Seed Written Questions in PG
-      for (const wq of memoryStore.writtenQuestions.values()) {
-        await activePool.query(
-          `INSERT INTO written_questions (
-            id, subject_id, subject_name, paper, chapter_id, chapter_name,
-            topic_id, topic_name, question_number, question_text, question_image_url,
-            explanation, explanation_latex, explanation_image_urls, tags, category,
-            difficulty, star_rating, created_at, updated_at, is_active
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
-          ON CONFLICT (id) DO NOTHING`,
-          [
-            wq.id,
-            wq.subject_id,
-            wq.subject_name,
-            wq.paper,
-            wq.chapter_id,
-            wq.chapter_name,
-            wq.topic_id || null,
-            wq.topic_name || null,
-            wq.question_number || null,
-            wq.question_text,
-            wq.question_image_url || null,
-            wq.explanation,
-            wq.explanation_latex || null,
-            wq.explanation_image_urls ? JSON.stringify(wq.explanation_image_urls) : null,
-            JSON.stringify(wq.tags || []),
-            wq.category || 'varsity_a',
-            wq.difficulty || 'medium',
-            wq.star_rating || 3,
-            wq.created_at || Date.now(),
-            wq.updated_at || Date.now(),
-            wq.is_active !== undefined ? wq.is_active : true,
-          ]
-        );
-      }
-
       // Seed Snippets in PG
       for (const s of memoryStore.snippets.values()) {
         await activePool.query(
@@ -557,7 +467,7 @@ export async function getDatabase(): Promise<void> {
         );
       }
 
-      console.log(`[PostgreSQL] ✅ Initialized & synced ${memoryStore.questions.size} MCQ questions, ${memoryStore.writtenQuestions.size} Written questions, ${memoryStore.topics.size} topics into PostgreSQL.`);
+      console.log(`[PostgreSQL] ✅ Initialized & synced ${memoryStore.topics.size} topics into PostgreSQL.`);
     } catch (err: any) {
       isPgConnected = false;
       if (poolInstance) {

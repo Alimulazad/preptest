@@ -148,7 +148,7 @@ export const ExamScreen: React.FC<ExamScreenProps> = ({
 
   // Helper to filter / prepare questions
   const prepareQuestions = (config: ExamSetupState): Question[] => {
-    let pool = questions && questions.length > 0 ? [...questions] : [...INITIAL_QUESTIONS];
+    let pool = questions && questions.length > 0 ? [...questions] : [];
 
     if (config.subjectKey && config.subjectKey !== 'preset') {
       const subjectMapping: Record<string, string[]> = {
@@ -174,12 +174,12 @@ export const ExamScreen: React.FC<ExamScreenProps> = ({
     }
 
     if (pool.length === 0) {
-      pool = [...INITIAL_QUESTIONS];
+      return [];
     }
 
     const shuffled = [...pool].sort(() => Math.random() - 0.5);
     const count = Math.min(shuffled.length, config.questionCount || 15);
-    return shuffled.slice(0, Math.max(5, count));
+    return shuffled.slice(0, count);
   };
 
   // --- Quick Practice Launch Handlers ---

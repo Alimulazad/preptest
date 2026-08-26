@@ -65,7 +65,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
     UNIVERSITIES_DATA[0];
 
   // Daily challenge question
-  const dailyQuestion: Question = INITIAL_QUESTIONS[0];
+  const dailyQuestion: Question | undefined = questions.length > 0 ? questions[0] : undefined;
 
   const isLoggedIn = !!currentUser;
   const streakCount = currentUser ? progress.streakDays || 0 : progress.streakDays || 0;
@@ -370,26 +370,28 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
       </div>
 
       {/* 6. Daily Admission Challenge Question */}
-      <div className="space-y-2 pt-1">
-        <div className="flex items-center justify-between px-1">
-          <div className="flex items-center gap-1.5">
-            <Sparkles className="w-4 h-4 text-[#2563EB] dark:text-blue-400" />
-            <h3 className="font-bold text-[#1E3A8A] dark:text-blue-400 text-sm sm:text-base">
-              আজকের পদার্থবিজ্ঞান স্পেশাল প্রশ্ন
-            </h3>
+      {dailyQuestion && (
+        <div className="space-y-2 pt-1">
+          <div className="flex items-center justify-between px-1">
+            <div className="flex items-center gap-1.5">
+              <Sparkles className="w-4 h-4 text-[#2563EB] dark:text-blue-400" />
+              <h3 className="font-bold text-[#1E3A8A] dark:text-blue-400 text-sm sm:text-base">
+                আজকের পদার্থবিজ্ঞান স্পেশাল প্রশ্ন
+              </h3>
+            </div>
+            <span className="text-[11px] font-bold text-[#1E40AF] dark:text-blue-300 bg-[#DBEAFE] dark:bg-blue-950/60 px-2 py-0.5 rounded-md uppercase font-mono border border-blue-200/50 dark:border-blue-800/60">
+              Daily Challenge
+            </span>
           </div>
-          <span className="text-[11px] font-bold text-[#1E40AF] dark:text-blue-300 bg-[#DBEAFE] dark:bg-blue-950/60 px-2 py-0.5 rounded-md uppercase font-mono border border-blue-200/50 dark:border-blue-800/60">
-            Daily Challenge
-          </span>
-        </div>
 
-        <QuestionCard
-          question={dailyQuestion}
-          index={0}
-          mode="practice"
-          onAskAI={() => onOpenAITutor()}
-        />
-      </div>
+          <QuestionCard
+            question={dailyQuestion}
+            index={0}
+            mode="practice"
+            onAskAI={() => onOpenAITutor()}
+          />
+        </div>
+      )}
     </div>
   );
 };

@@ -1,8 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { X, Star, Bookmark, Flag, ChevronDown, ChevronUp, ThumbsUp, ThumbsDown, Sparkles } from 'lucide-react';
+import { X, Star, Bookmark, Flag, ChevronDown, ChevronUp, ThumbsUp, ThumbsDown, Sparkles, AlertCircle } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Question } from '../../types';
-import { INITIAL_QUESTIONS } from '../../data/admissionData';
 import { MathText } from '../../components/MathText';
 import { MascotIllustration } from './components/MascotIllustration';
 
@@ -54,9 +53,31 @@ export const QuickPracticeQuiz: React.FC<QuickPracticeQuizProps> = ({
   // AI Feedback ratings
   const [aiFeedback, setAiFeedback] = useState<'up' | 'down' | null>(null);
 
-  const safeQuestions = (questions && questions.length > 0) ? questions : INITIAL_QUESTIONS;
+  const safeQuestions = questions && questions.length > 0 ? questions : [];
   const activeQuestionList = phase === 'main' ? safeQuestions : reviewQuestions;
-  const currentQ = activeQuestionList[currentIndex] || safeQuestions[0] || INITIAL_QUESTIONS[0];
+
+  if (safeQuestions.length === 0) {
+    return (
+      <div className="min-h-screen bg-slate-50 dark:bg-slate-900 flex flex-col items-center justify-center p-6 text-center">
+        <div className="w-16 h-16 rounded-2xl bg-amber-50 dark:bg-amber-950/50 flex items-center justify-center text-amber-600 mb-4 border border-amber-200 dark:border-amber-800">
+          <AlertCircle className="w-8 h-8" />
+        </div>
+        <h2 className="text-lg font-bold text-slate-900 dark:text-slate-100 mb-2">অনুশীলনের জন্য কোনো প্রশ্ন নেই</h2>
+        <p className="text-sm text-slate-600 dark:text-slate-400 max-w-sm mb-6 leading-relaxed">
+          এই অধ্যায়ের জন্য ডেটাবেজে এখনও কোনো প্রশ্ন যুক্ত করা হয়নি।
+        </p>
+        <button
+          type="button"
+          onClick={onExit}
+          className="px-6 py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-bold text-sm rounded-xl transition-all cursor-pointer shadow-sm"
+        >
+          ফিরে যান
+        </button>
+      </div>
+    );
+  }
+
+  const currentQ = activeQuestionList[currentIndex] || safeQuestions[0];
   const isLastQuestion = currentIndex === activeQuestionList.length - 1;
 
   const isCurrentCorrect = selectedOption && currentQ && currentQ.correct_ans === selectedOption;

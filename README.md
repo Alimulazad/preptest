@@ -105,6 +105,7 @@ JACHAI uses **PostgreSQL 16** with automatic in-memory SQLite fallback during lo
 2. **Layer 2 (Smart Import Pipeline)**: Auto-resolves topic names to valid topic IDs, preserves custom topic IDs, and supports batch range assignment in the admin panel.
 3. **Layer 3 (Dynamic Recount Engine)**: Auto-synchronizes `mcq_count`, `written_count`, and per-category counts (`varsity_a_count`, `engineering_count`, etc.) with 1-click healing (`POST /api/admin/heal-database`).
 4. **Layer 4 (Frontend State Machine)**: Pure ID-driven hierarchical filtering eliminating UI mismatches or missing questions.
+5. **Strict Database-First Policy**: Disables hardcoded mock question injection so the application renders accurate real-time empty/loaded states without unprompted fallback questions when the database is empty.
 
 ---
 

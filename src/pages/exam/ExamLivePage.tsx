@@ -248,6 +248,27 @@ export const ExamLivePage: React.FC<ExamLivePageProps> = ({
   const isTimeWarning = secondsRemaining <= 300; // Under 5 minutes
   const isTimeCritical = secondsRemaining <= 60; // Under 1 minute
 
+  if (questions.length === 0) {
+    return (
+      <div className="min-h-screen bg-slate-50 dark:bg-slate-900 flex flex-col items-center justify-center p-6 text-center">
+        <div className="w-16 h-16 rounded-2xl bg-amber-50 dark:bg-amber-950/50 flex items-center justify-center text-amber-600 mb-4 border border-amber-200 dark:border-amber-800">
+          <AlertTriangle className="w-8 h-8" />
+        </div>
+        <h2 className="text-lg font-bold text-slate-900 dark:text-slate-100 mb-2">কোনো প্রশ্ন পাওয়া যায়নি</h2>
+        <p className="text-sm text-slate-600 dark:text-slate-400 max-w-sm mb-6 leading-relaxed">
+          এই বিষয়ের জন্য ডেটাবেজে এখনও কোনো প্রশ্ন যুক্ত করা হয়নি।
+        </p>
+        <button
+          type="button"
+          onClick={onExit}
+          className="px-6 py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-bold text-sm rounded-xl transition-all cursor-pointer shadow-sm"
+        >
+          ড্যাশবোর্ডে ফিরে যান
+        </button>
+      </div>
+    );
+  }
+
   const handleSubmit = () => {
     clearExamStorage();
     const timeTaken = durationMinutes * 60 - secondsRemaining;

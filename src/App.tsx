@@ -70,7 +70,7 @@ export function App() {
 
   const [currentUser, setCurrentUser] = useState<User | null>(() => getStoredUser());
   const [userProgress, setUserProgress] = useState<UserProgress>(getSavedUserData());
-  const [questions, setQuestions] = useState<Question[]>(INITIAL_QUESTIONS);
+  const [questions, setQuestions] = useState<Question[]>([]);
   const [isLoadingQuestions, setIsLoadingQuestions] = useState(false);
 
   // Modal states
@@ -89,11 +89,10 @@ export function App() {
     try {
       setIsLoadingQuestions(true);
       const data = await fetchQuestions();
-      if (Array.isArray(data) && data.length > 0) {
-        setQuestions(data);
-      }
+      setQuestions(Array.isArray(data) ? data : []);
     } catch (e) {
       console.warn('Questions sync notice:', e);
+      setQuestions([]);
     } finally {
       setIsLoadingQuestions(false);
     }

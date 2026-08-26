@@ -173,17 +173,23 @@ export const QuestionBankScreen: React.FC<QuestionBankScreenProps> = ({
   const [isLoadingMore, setIsLoadingMore] = useState<boolean>(false);
   const loadMoreTriggerRef = useRef<HTMLDivElement | null>(null);
 
-  const [fetchedWrittenQuestions, setFetchedWrittenQuestions] = useState<WrittenQuestion[]>(INITIAL_WRITTEN_QUESTIONS);
+  const [fetchedWrittenQuestions, setFetchedWrittenQuestions] = useState<WrittenQuestion[]>([]);
 
   useEffect(() => {
     fetch('/api/written-questions')
-      .then((res) => (res.ok ? res.json() : null))
+      .then((res) => (res.ok ? res.json() : []))
       .then((data) => {
-        if (data && Array.isArray(data) && data.length > 0) {
+        if (Array.isArray(data)) {
           setFetchedWrittenQuestions(data);
+        } else if (data && Array.isArray(data.questions)) {
+          setFetchedWrittenQuestions(data.questions);
+        } else {
+          setFetchedWrittenQuestions([]);
         }
       })
-      .catch(() => {});
+      .catch(() => {
+        setFetchedWrittenQuestions([]);
+      });
   }, []);
 
   const allWrittenQuestions = useMemo(() => {
