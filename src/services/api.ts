@@ -1,4 +1,4 @@
-import { Question, UserProgress, ChatMessage, User, AuthResponse, AIModelOption, KnowledgeSnippet, TopicRecord, AdminDraftItem, AdminApiKeyConfig, AdminSystemStats, OpenRouterSystemHealthResponse, ActiveUsersResponse } from '../types';
+import { Question, UserProgress, ChatMessage, User, AuthResponse, AIModelOption, KnowledgeSnippet, TopicRecord, AdminDraftItem, AdminApiKeyConfig, AdminSystemStats, OpenRouterSystemHealthResponse, ActiveUsersResponse, FacetedFilterCounts } from '../types';
 import { INITIAL_USER_PROGRESS, INITIAL_QUESTIONS, CHAPTERS_DATA, INITIAL_KNOWLEDGE_SNIPPETS } from '../data/admissionData';
 import { fetchWithRetry, probeServerHealth } from '../utils/apiClient';
 
@@ -879,6 +879,29 @@ export async function bulkImportKnowledgeSnippetsApi(data: any): Promise<BulkImp
   }
 
   return resData;
+}
+
+export async function fetchQuestionFacets(filters?: FetchQuestionsParams): Promise<FacetedFilterCounts | null> {
+  try {
+    const params = new URLSearchParams();
+    if (filters?.subject_id) params.append('subject_id', filters.subject_id);
+    if (filters?.chapter_id) params.append('chapter_id', filters.chapter_id);
+    if (filters?.topic_id) params.append('topic_id', filters.topic_id);
+    if (filters?.paper) params.append('paper', filters.paper);
+    if (filters?.tag) params.append('tag', filters.tag);
+    if (filters?.search) params.append('search', filters.search);
+    if (filters?.category) params.append('category', filters.category);
+    if (filters?.difficulty) params.append('difficulty', filters.difficulty);
+
+    const queryString = params.toString();
+    const url = `/api/questions/facets${queryString ? `?${queryString}` : ''}`;
+
+    const response = await fetchWithRetry(getApiUrl(url));
+    if (!response.ok) return null;
+    return await response.json();
+  } catch (e) {
+    return null;
+  }
 }
 
 // ---------------- SQLite Topic API Operations ----------------

@@ -928,6 +928,236 @@ export function encodeCursor(created_at?: number, id?: string): string | null {
   return Buffer.from(JSON.stringify({ created_at: created_at || Date.now(), id })).toString('base64');
 }
 
+export interface FacetedFilterCounts {
+  total: number;
+  mcqCount: number;
+  writtenCount: number;
+  byCategory: {
+    engineering: number;
+    medical: number;
+    varsity_a: number;
+    academic: number;
+    main_book: number;
+    [key: string]: number;
+  };
+  byDifficulty: {
+    easy: number;
+    medium: number;
+    hard: number;
+  };
+  byPaper: {
+    '1st': number;
+    '2nd': number;
+    [key: string]: number;
+  };
+  byTopic: Record<string, number>;
+  byChapter: Record<string, number>;
+}
+
+export async function getQuestionFacetedCounts(filters?: {
+  subject_id?: string;
+  chapter_id?: string;
+  topic_id?: string;
+  paper?: string;
+  category?: string;
+  difficulty?: string;
+  tag?: string;
+  search?: string;
+}): Promise<FacetedFilterCounts> {
+  const result: FacetedFilterCounts = {
+    total: 0,
+    mcqCount: 0,
+    writtenCount: 0,
+    byCategory: {
+      engineering: 0,
+      medical: 0,
+      varsity_a: 0,
+      academic: 0,
+      main_book: 0,
+    },
+    byDifficulty: {
+      easy: 0,
+      medium: 0,
+      hard: 0,
+    },
+    byPaper: {
+      '1st': 0,
+      '2nd': 0,
+    },
+    byTopic: {},
+    byChapter: {},
+  };
+
+  try {
+    let whereClause = ' WHERE (is_active IS NULL OR is_active = TRUE)';
+    const params: any[] = [];
+    let pIdx = 1;
+
+    if (filters?.subject_id) {
+      whereClause += ` AND subject_id = $${pIdx++}`;
+      params.push(filters.subject_id);
+    }
+    if (filters?.chapter_id) {
+      whereClause += ` AND chapter_id = $${pIdx++}`;
+      params.push(filters.chapter_id);
+    }
+    if (filters?.topic_id) {
+      whereClause += ` AND topic_id = $${pIdx++}`;
+      params.push(filters.topic_id);
+    }
+    if (filters?.paper) {
+      whereClause += ` AND paper = $${pIdx++}`;
+      params.push(filters.paper);
+    }
+    if (filters?.category) {
+      whereClause += ` AND (primary_category = $${pIdx++} OR category = $${pIdx++} OR tags @> ARRAY[$${pIdx++}]::text[] OR tags ILIKE $${pIdx++})`;
+      params.push(filters.category, filters.category, filters.category, `%"${filters.category}"%`);
+    }
+    if (filters?.difficulty) {
+      whereClause += ` AND difficulty = $${pIdx++}`;
+      params.push(filters.difficulty);
+    }
+    if (filters?.tag) {
+      whereClause += ` AND (tags @> ARRAY[$${pIdx++}]::text[] OR tags ILIKE $${pIdx++})`;
+      params.push(filters.tag, `%"${filters.tag}"%`);
+    }
+    if (filters?.search && filters.search.trim()) {
+      const cleanTerm = filters.search.trim();
+      whereClause += ` AND (
+        search_vector @@ plainto_tsquery('simple', $${pIdx++}) OR
+        question_text ILIKE $${pIdx++} OR
+        explanation ILIKE $${pIdx++} OR
+        chapter_name ILIKE $${pIdx++} OR
+        topic_name ILIKE $${pIdx++}
+      )`;
+      const termPattern = `%${cleanTerm}%`;
+      params.push(cleanTerm, termPattern, termPattern, termPattern, termPattern);
+    }
+
+    // MCQ Aggregate Query
+    const mcqStatsSql = `
+      SELECT 
+        COUNT(*) as total,
+        COALESCE(type, 'mcq') as type,
+        COALESCE(primary_category, category, 'varsity_a') as category,
+        COALESCE(difficulty, 'medium') as difficulty,
+        COALESCE(paper, '1st') as paper,
+        chapter_id,
+        topic_id
+      FROM questions
+      ${whereClause}
+      GROUP BY type, COALESCE(primary_category, category, 'varsity_a'), difficulty, paper, chapter_id, topic_id
+    `;
+    const mcqRes = await query(mcqStatsSql, params);
+
+    if (mcqRes && mcqRes.rows) {
+      for (const row of mcqRes.rows) {
+        const c = Number(row.total) || 0;
+        result.total += c;
+        if (row.type === 'written') {
+          result.writtenCount += c;
+        } else {
+          result.mcqCount += c;
+        }
+
+        const cat = row.category;
+        if (cat) {
+          result.byCategory[cat] = (result.byCategory[cat] || 0) + c;
+        }
+
+        const diff = row.difficulty as 'easy' | 'medium' | 'hard';
+        if (diff && result.byDifficulty[diff] !== undefined) {
+          result.byDifficulty[diff] += c;
+        }
+
+        const pap = row.paper;
+        if (pap) {
+          result.byPaper[pap] = (result.byPaper[pap] || 0) + c;
+        }
+
+        if (row.chapter_id) {
+          result.byChapter[row.chapter_id] = (result.byChapter[row.chapter_id] || 0) + c;
+        }
+
+        if (row.topic_id) {
+          result.byTopic[row.topic_id] = (result.byTopic[row.topic_id] || 0) + c;
+        }
+      }
+    }
+
+    // Written Questions Count
+    let wWhereClause = ' WHERE is_active = TRUE';
+    const wParams: any[] = [];
+    let wIdx = 1;
+
+    if (filters?.subject_id) {
+      wWhereClause += ` AND subject_id = $${wIdx++}`;
+      wParams.push(filters.subject_id);
+    }
+    if (filters?.chapter_id) {
+      wWhereClause += ` AND chapter_id = $${wIdx++}`;
+      wParams.push(filters.chapter_id);
+    }
+    if (filters?.topic_id) {
+      wWhereClause += ` AND topic_id = $${wIdx++}`;
+      wParams.push(filters.topic_id);
+    }
+    if (filters?.paper) {
+      wWhereClause += ` AND paper = $${wIdx++}`;
+      wParams.push(filters.paper);
+    }
+    if (filters?.category) {
+      wWhereClause += ` AND (category = $${wIdx++} OR tags ILIKE $${wIdx++})`;
+      wParams.push(filters.category, `%"${filters.category}"%`);
+    }
+
+    const wRes = await query(`SELECT COUNT(*) as w_total FROM written_questions ${wWhereClause}`, wParams);
+    if (wRes && wRes.rows && wRes.rows[0]) {
+      const wCount = Number(wRes.rows[0].w_total) || 0;
+      result.writtenCount += wCount;
+      result.total += wCount;
+    }
+
+    return result;
+  } catch (err) {
+    // In-memory fallback calculation
+    const allQ = Array.from(memoryStore.questions.values()).filter((q: any) => q.is_active !== false);
+    for (const q of allQ) {
+      if (filters?.subject_id && q.subject_id !== filters.subject_id) continue;
+      if (filters?.chapter_id && q.chapter_id !== filters.chapter_id) continue;
+      if (filters?.topic_id && q.topic_id !== filters.topic_id) continue;
+      if (filters?.paper && q.paper !== filters.paper) continue;
+
+      result.total++;
+      if (q.type === 'written') {
+        result.writtenCount++;
+      } else {
+        result.mcqCount++;
+      }
+
+      const cat = q.category || 'varsity_a';
+      result.byCategory[cat] = (result.byCategory[cat] || 0) + 1;
+
+      const diff = (q.difficulty || 'medium') as 'easy' | 'medium' | 'hard';
+      if (result.byDifficulty[diff] !== undefined) {
+        result.byDifficulty[diff]++;
+      }
+
+      const pap = q.paper || '1st';
+      result.byPaper[pap] = (result.byPaper[pap] || 0) + 1;
+
+      if (q.chapter_id) {
+        result.byChapter[q.chapter_id] = (result.byChapter[q.chapter_id] || 0) + 1;
+      }
+      if (q.topic_id) {
+        result.byTopic[q.topic_id] = (result.byTopic[q.topic_id] || 0) + 1;
+      }
+    }
+
+    return result;
+  }
+}
+
 export async function getAllQuestions(filters?: {
   subject_id?: string;
   chapter_id?: string;
@@ -941,7 +1171,7 @@ export async function getAllQuestions(filters?: {
   cursor?: string;
   page?: number;
   limit?: number;
-}): Promise<PaginatedQuestionsResult> {
+}): Promise<PaginatedQuestionsResult & { facets?: FacetedFilterCounts }> {
   const page = Math.max(1, filters?.page || 1);
   const limit = filters?.limit ? Math.max(1, filters.limit) : 0;
   const cursorData = decodeCursor(filters?.cursor);
@@ -973,21 +1203,29 @@ export async function getAllQuestions(filters?: {
       params.push(filters.paper);
     }
     if (filters?.category) {
-      whereClause += ` AND (category = $${pIdx++} OR tags ILIKE $${pIdx++})`;
-      params.push(filters.category, `%${filters.category}%`);
+      whereClause += ` AND (primary_category = $${pIdx++} OR category = $${pIdx++} OR tags @> ARRAY[$${pIdx++}]::text[] OR tags ILIKE $${pIdx++})`;
+      params.push(filters.category, filters.category, filters.category, `%"${filters.category}"%`);
     }
     if (filters?.difficulty) {
       whereClause += ` AND difficulty = $${pIdx++}`;
       params.push(filters.difficulty);
     }
     if (filters?.tag) {
-      whereClause += ` AND tags ILIKE $${pIdx++}`;
-      params.push(`%${filters.tag}%`);
+      // High-precision exact tag matching utilizing GIN / containment
+      whereClause += ` AND (tags @> ARRAY[$${pIdx++}]::text[] OR tags ILIKE $${pIdx++})`;
+      params.push(filters.tag, `%"${filters.tag}"%`);
     }
-    if (filters?.search) {
-      const term = `%${filters.search}%`;
-      whereClause += ` AND (question_text ILIKE $${pIdx++} OR explanation ILIKE $${pIdx++} OR tags ILIKE $${pIdx++} OR chapter_name ILIKE $${pIdx++} OR topic_name ILIKE $${pIdx++})`;
-      params.push(term, term, term, term, term);
+    if (filters?.search && filters.search.trim()) {
+      const cleanTerm = filters.search.trim();
+      whereClause += ` AND (
+        search_vector @@ plainto_tsquery('simple', $${pIdx++}) OR
+        question_text ILIKE $${pIdx++} OR
+        explanation ILIKE $${pIdx++} OR
+        chapter_name ILIKE $${pIdx++} OR
+        topic_name ILIKE $${pIdx++}
+      )`;
+      const termPattern = `%${cleanTerm}%`;
+      params.push(cleanTerm, termPattern, termPattern, termPattern, termPattern);
     }
 
     // 1. Total count query
@@ -2544,21 +2782,22 @@ export async function getAllWrittenQuestions(filters?: {
       params.push(filters.paper);
     }
     if (filters?.category) {
-      whereClause += ` AND (category = $${pIdx++} OR tags ILIKE $${pIdx++})`;
-      params.push(filters.category, `%${filters.category}%`);
+      whereClause += ` AND (category = $${pIdx++} OR tags @> ARRAY[$${pIdx++}]::text[] OR tags ILIKE $${pIdx++})`;
+      params.push(filters.category, filters.category, `%"${filters.category}"%`);
     }
     if (filters?.difficulty) {
       whereClause += ` AND difficulty = $${pIdx++}`;
       params.push(filters.difficulty);
     }
     if (filters?.tag) {
-      whereClause += ` AND tags ILIKE $${pIdx++}`;
-      params.push(`%${filters.tag}%`);
+      whereClause += ` AND (tags @> ARRAY[$${pIdx++}]::text[] OR tags ILIKE $${pIdx++})`;
+      params.push(filters.tag, `%"${filters.tag}"%`);
     }
-    if (filters?.search) {
-      const term = `%${filters.search}%`;
-      whereClause += ` AND (question_text ILIKE $${pIdx++} OR explanation ILIKE $${pIdx++} OR tags ILIKE $${pIdx++} OR chapter_name ILIKE $${pIdx++} OR topic_name ILIKE $${pIdx++})`;
-      params.push(term, term, term, term, term);
+    if (filters?.search && filters.search.trim()) {
+      const cleanTerm = filters.search.trim();
+      whereClause += ` AND (question_text ILIKE $${pIdx++} OR explanation ILIKE $${pIdx++} OR chapter_name ILIKE $${pIdx++} OR topic_name ILIKE $${pIdx++})`;
+      const termPattern = `%${cleanTerm}%`;
+      params.push(termPattern, termPattern, termPattern, termPattern);
     }
 
     // 1. Get total count

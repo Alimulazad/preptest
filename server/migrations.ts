@@ -195,35 +195,107 @@ export const migrations: Migration[] = [
     },
   },
   {
-    id: '005_optimize_database_indexes',
-    name: 'Add compound filter indexes and GIN tags index for fast cursor pagination and filtering',
+    id: '006_relational_hierarchy_and_gin_indexes',
+    name: 'Create subjects, chapters, institutions, question_exam_occurrences tables, and setup GIN / tsvector full-text search indexes',
     up: async (client: pg.PoolClient) => {
+      // 1. Subjects Table
       await client.query(`
-        -- Ensure is_active exists on questions table
-        ALTER TABLE questions ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE;
+        CREATE TABLE IF NOT EXISTS subjects (
+          id VARCHAR(100) PRIMARY KEY,
+          name VARCHAR(150) NOT NULL,
+          bangla_name VARCHAR(150) NOT NULL,
+          paper VARCHAR(20) NOT NULL DEFAULT 'both' CHECK (paper IN ('1st', '2nd', 'both')),
+          created_at BIGINT
+        );
+      `);
 
-        -- Create compound index for written questions filter
-        CREATE INDEX IF NOT EXISTS idx_written_filter ON written_questions (subject_id, chapter_id, is_active);
+      // 2. Chapters Table
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS chapters (
+          id VARCHAR(100) PRIMARY KEY,
+          subject_id VARCHAR(100) NOT NULL REFERENCES subjects(id) ON DELETE CASCADE,
+          chapter_no INTEGER NOT NULL,
+          name VARCHAR(200) NOT NULL,
+          bangla_name VARCHAR(200) NOT NULL,
+          paper VARCHAR(20) DEFAULT '1st',
+          created_at BIGINT
+        );
+        CREATE INDEX IF NOT EXISTS idx_chapters_subject_id ON chapters (subject_id);
+      `);
 
-        -- Create compound index for mcq questions filter
-        CREATE INDEX IF NOT EXISTS idx_mcq_filter ON questions (subject_id, chapter_id, type, is_active);
+      // 3. Institutions Table (Universities, Engineering, Medical, Boards)
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS institutions (
+          id VARCHAR(100) PRIMARY KEY,
+          name VARCHAR(200) NOT NULL,
+          short_code VARCHAR(50) UNIQUE NOT NULL,
+          bangla_name VARCHAR(200),
+          category VARCHAR(50) NOT NULL DEFAULT 'varsity_a' CHECK (category IN ('engineering', 'varsity_a', 'medical', 'academic', 'main_book', 'other')),
+          created_at BIGINT
+        );
+        CREATE INDEX IF NOT EXISTS idx_institutions_category ON institutions (category);
+      `);
 
-        -- Install pg_trgm extension for GIN index on text/tags if available
-        CREATE EXTENSION IF NOT EXISTS pg_trgm;
+      // 4. Ensure Topics Table foreign key relations and indexes
+      await client.query(`
+        -- Add subject_id / chapter_id references if needed
+        CREATE INDEX IF NOT EXISTS idx_topics_chapter_fk ON topics (chapter_id);
+        CREATE INDEX IF NOT EXISTS idx_topics_subject_fk ON topics (subject_id);
+      `);
 
-        -- Create GIN index on written_questions tags
-        DO $$
+      // 5. Update Questions Table with primary_category, JSONB options, TEXT[] tags and tsvector search
+      await client.query(`
+        ALTER TABLE questions ADD COLUMN IF NOT EXISTS primary_category VARCHAR(50) DEFAULT 'varsity_a';
+        ALTER TABLE questions ADD COLUMN IF NOT EXISTS search_vector tsvector;
+
+        -- Create B-Tree compound hierarchy index for lightning fast multi-level filtering
+        CREATE INDEX IF NOT EXISTS idx_questions_hierarchy ON questions (subject_id, chapter_id, topic_id, type, primary_category, is_active);
+
+        -- Create Full-Text Search tsvector index on questions
+        CREATE INDEX IF NOT EXISTS idx_questions_fts ON questions USING GIN (search_vector);
+      `);
+
+      // 6. Question Exam Occurrences (M:N Relation for Multiple Exam Appearances)
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS question_exam_occurrences (
+          id SERIAL PRIMARY KEY,
+          question_id VARCHAR(255) NOT NULL REFERENCES questions(id) ON DELETE CASCADE,
+          institution_id VARCHAR(100) NOT NULL REFERENCES institutions(id) ON DELETE CASCADE,
+          exam_unit VARCHAR(50),
+          session_year VARCHAR(50),
+          question_no INTEGER,
+          is_primary BOOLEAN DEFAULT FALSE,
+          created_at BIGINT
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_occurrences_question_id ON question_exam_occurrences (question_id);
+        CREATE INDEX IF NOT EXISTS idx_occurrences_inst_year ON question_exam_occurrences (institution_id, session_year, exam_unit);
+      `);
+
+      // 7. Full-Text Search Trigger for automatic search_vector maintenance
+      await client.query(`
+        CREATE OR REPLACE FUNCTION update_questions_search_vector() RETURNS trigger AS $$
         BEGIN
-          BEGIN
-            CREATE INDEX IF NOT EXISTS idx_written_tags ON written_questions USING GIN(tags gin_trgm_ops);
-          EXCEPTION WHEN OTHERS THEN
-            BEGIN
-              CREATE INDEX IF NOT EXISTS idx_written_tags ON written_questions USING GIN(to_tsvector('simple', tags));
-            EXCEPTION WHEN OTHERS THEN
-              NULL;
-            END;
-          END;
-        END $$;
+          NEW.search_vector :=
+            setweight(to_tsvector('simple', COALESCE(NEW.question_text, '')), 'A') ||
+            setweight(to_tsvector('simple', COALESCE(NEW.explanation, '')), 'B') ||
+            setweight(to_tsvector('simple', COALESCE(NEW.tags, '')), 'C');
+          RETURN NEW;
+        END
+        $$ LANGUAGE plpgsql;
+
+        DROP TRIGGER IF EXISTS trg_questions_search_vector ON questions;
+        CREATE TRIGGER trg_questions_search_vector
+        BEFORE INSERT OR UPDATE ON questions
+        FOR EACH ROW
+        EXECUTE FUNCTION update_questions_search_vector();
+
+        -- Backfill existing questions search_vector
+        UPDATE questions SET search_vector =
+          setweight(to_tsvector('simple', COALESCE(question_text, '')), 'A') ||
+          setweight(to_tsvector('simple', COALESCE(explanation, '')), 'B') ||
+          setweight(to_tsvector('simple', COALESCE(tags, '')), 'C')
+        WHERE search_vector IS NULL;
       `);
     },
   },

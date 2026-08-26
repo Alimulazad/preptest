@@ -11,6 +11,7 @@ import rateLimit from 'express-rate-limit';
 import {
   getAllQuestions,
   getQuestionById,
+  getQuestionFacetedCounts,
   insertQuestion,
   updateQuestionInDb,
   deleteQuestionFromDb,
@@ -1440,15 +1441,38 @@ Additional Notes from Admin: ${promptNotes || 'None'}`;
 });
 
 
+// GET /api/questions/facets for dynamic aggregated counts
+app.get('/api/questions/facets', async (req: Request, res: Response) => {
+  try {
+    const { subject_id, chapter_id, topic_id, paper, tag, search, category, difficulty } = req.query;
+
+    const facets = await getQuestionFacetedCounts({
+      subject_id: typeof subject_id === 'string' ? subject_id : undefined,
+      chapter_id: typeof chapter_id === 'string' ? chapter_id : undefined,
+      topic_id: typeof topic_id === 'string' ? topic_id : undefined,
+      paper: typeof paper === 'string' ? paper : undefined,
+      tag: typeof tag === 'string' ? tag : undefined,
+      search: typeof search === 'string' ? search : undefined,
+      category: typeof category === 'string' ? category : undefined,
+      difficulty: typeof difficulty === 'string' ? difficulty : undefined,
+    });
+
+    return res.json(facets);
+  } catch (error: any) {
+    console.error('Error calculating question facets:', error);
+    return res.status(500).json({ error: 'Failed to calculate question facets', details: error.message });
+  }
+});
+
 // GET /api/questions with optional filtering, cursor and page pagination
 app.get('/api/questions', async (req: Request, res: Response) => {
   try {
-    const { subject_id, chapter_id, topic_id, type, paper, tag, search, category, difficulty, cursor, page, limit } = req.query;
+    const { subject_id, chapter_id, topic_id, type, paper, tag, search, category, difficulty, cursor, page, limit, include_facets } = req.query;
 
     const pageNum = page !== undefined ? Math.max(1, parseInt(page as string, 10) || 1) : undefined;
     const limitNum = limit !== undefined ? Math.max(1, parseInt(limit as string, 10) || 20) : undefined;
 
-    const result = await getAllQuestions({
+    const filterObj = {
       subject_id: typeof subject_id === 'string' ? subject_id : undefined,
       chapter_id: typeof chapter_id === 'string' ? chapter_id : undefined,
       topic_id: typeof topic_id === 'string' ? topic_id : undefined,
@@ -1461,7 +1485,14 @@ app.get('/api/questions', async (req: Request, res: Response) => {
       cursor: typeof cursor === 'string' ? cursor : undefined,
       page: pageNum,
       limit: limitNum,
-    });
+    };
+
+    const result = await getAllQuestions(filterObj);
+
+    let facets = undefined;
+    if (include_facets === 'true' || include_facets === '1') {
+      facets = await getQuestionFacetedCounts(filterObj);
+    }
 
     res.setHeader('X-Total-Count', String(result.total));
     res.setHeader('X-Page', String(result.page || 1));
@@ -1481,6 +1512,7 @@ app.get('/api/questions', async (req: Request, res: Response) => {
       page: result.page,
       limit: result.limit,
       totalPages: result.totalPages,
+      facets,
     });
   } catch (error: any) {
     console.error('Error fetching questions from database:', error);
