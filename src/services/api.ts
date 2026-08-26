@@ -1,6 +1,7 @@
 import { Question, UserProgress, ChatMessage, User, AuthResponse, AIModelOption, KnowledgeSnippet, TopicRecord, AdminDraftItem, AdminApiKeyConfig, AdminSystemStats, OpenRouterSystemHealthResponse, ActiveUsersResponse } from '../types';
 import { INITIAL_USER_PROGRESS, INITIAL_QUESTIONS, CHAPTERS_DATA, INITIAL_KNOWLEDGE_SNIPPETS } from '../data/admissionData';
 import { fetchWithRetry, probeServerHealth } from '../utils/apiClient';
+import { validateAndStandardizeQueryParams } from '../utils/questionFilter';
 
 export { probeServerHealth };
 
@@ -536,23 +537,24 @@ export interface PaginatedQuestionsResponse {
 
 export async function fetchQuestions(filters?: FetchQuestionsParams): Promise<Question[]> {
   try {
+    const validatedFilters = validateAndStandardizeQueryParams(filters);
     const params = new URLSearchParams();
-    if (filters?.subject_id) params.append('subject_id', filters.subject_id);
-    if (filters?.chapter_id) params.append('chapter_id', filters.chapter_id);
-    if (filters?.topic_id) params.append('topic_id', filters.topic_id);
-    if (filters?.paper) params.append('paper', filters.paper);
-    if (filters?.tag) params.append('tag', filters.tag);
-    if (filters?.search) params.append('search', filters.search);
-    if (filters?.category) params.append('category', filters.category);
-    if (filters?.page) params.append('page', String(filters.page));
-    if (filters?.limit) params.append('limit', String(filters.limit));
+    if (validatedFilters?.subject_id) params.append('subject_id', validatedFilters.subject_id);
+    if (validatedFilters?.chapter_id) params.append('chapter_id', validatedFilters.chapter_id);
+    if (validatedFilters?.topic_id) params.append('topic_id', validatedFilters.topic_id);
+    if (validatedFilters?.paper) params.append('paper', validatedFilters.paper);
+    if (validatedFilters?.tag) params.append('tag', validatedFilters.tag);
+    if (validatedFilters?.search) params.append('search', validatedFilters.search);
+    if (validatedFilters?.category) params.append('category', validatedFilters.category);
+    if (validatedFilters?.page) params.append('page', String(validatedFilters.page));
+    if (validatedFilters?.limit) params.append('limit', String(validatedFilters.limit));
 
     const queryString = params.toString();
     const url = `/api/questions${queryString ? `?${queryString}` : ''}`;
     
     const response = await fetchWithRetry(getApiUrl(url));
     if (!response.ok) {
-      return getFilteredInitialQuestions(filters);
+      return getFilteredInitialQuestions(validatedFilters);
     }
     const data = await response.json();
     if (Array.isArray(data)) {
@@ -561,7 +563,7 @@ export async function fetchQuestions(filters?: FetchQuestionsParams): Promise<Qu
     if (data && Array.isArray(data.questions)) {
       return data.questions;
     }
-    return getFilteredInitialQuestions(filters);
+    return getFilteredInitialQuestions(validatedFilters);
   } catch (e) {
     return getFilteredInitialQuestions(filters);
   }
@@ -569,25 +571,26 @@ export async function fetchQuestions(filters?: FetchQuestionsParams): Promise<Qu
 
 export async function fetchPaginatedQuestions(filters?: FetchQuestionsParams): Promise<PaginatedQuestionsResponse> {
   try {
+    const validatedFilters = validateAndStandardizeQueryParams(filters);
     const params = new URLSearchParams();
-    if (filters?.subject_id) params.append('subject_id', filters.subject_id);
-    if (filters?.chapter_id) params.append('chapter_id', filters.chapter_id);
-    if (filters?.topic_id) params.append('topic_id', filters.topic_id);
-    if (filters?.paper) params.append('paper', filters.paper);
-    if (filters?.tag) params.append('tag', filters.tag);
-    if (filters?.search) params.append('search', filters.search);
-    if (filters?.category) params.append('category', filters.category);
-    if (filters?.page) params.append('page', String(filters.page));
-    if (filters?.limit) params.append('limit', String(filters.limit));
+    if (validatedFilters?.subject_id) params.append('subject_id', validatedFilters.subject_id);
+    if (validatedFilters?.chapter_id) params.append('chapter_id', validatedFilters.chapter_id);
+    if (validatedFilters?.topic_id) params.append('topic_id', validatedFilters.topic_id);
+    if (validatedFilters?.paper) params.append('paper', validatedFilters.paper);
+    if (validatedFilters?.tag) params.append('tag', validatedFilters.tag);
+    if (validatedFilters?.search) params.append('search', validatedFilters.search);
+    if (validatedFilters?.category) params.append('category', validatedFilters.category);
+    if (validatedFilters?.page) params.append('page', String(validatedFilters.page));
+    if (validatedFilters?.limit) params.append('limit', String(validatedFilters.limit));
 
     const queryString = params.toString();
     const url = `/api/questions${queryString ? `?${queryString}` : ''}`;
 
     const response = await fetchWithRetry(getApiUrl(url));
     if (!response.ok) {
-      const fallbackList = getFilteredInitialQuestions(filters);
-      const page = filters?.page || 1;
-      const limit = filters?.limit || 20;
+      const fallbackList = getFilteredInitialQuestions(validatedFilters);
+      const page = validatedFilters?.page || 1;
+      const limit = validatedFilters?.limit || 20;
       return {
         questions: fallbackList.slice((page - 1) * limit, page * limit),
         total: fallbackList.length,
@@ -602,8 +605,8 @@ export async function fetchPaginatedQuestions(filters?: FetchQuestionsParams): P
       return data as PaginatedQuestionsResponse;
     }
     if (Array.isArray(data)) {
-      const page = filters?.page || 1;
-      const limit = filters?.limit || data.length || 20;
+      const page = validatedFilters?.page || 1;
+      const limit = validatedFilters?.limit || data.length || 20;
       return {
         questions: data,
         total: data.length,
@@ -612,7 +615,7 @@ export async function fetchPaginatedQuestions(filters?: FetchQuestionsParams): P
         totalPages: 1,
       };
     }
-    const fallbackList = getFilteredInitialQuestions(filters);
+    const fallbackList = getFilteredInitialQuestions(validatedFilters);
     return {
       questions: fallbackList,
       total: fallbackList.length,
@@ -854,24 +857,25 @@ export async function fetchTopics(filters?: {
   search?: string;
 }): Promise<TopicRecord[]> {
   try {
+    const validatedFilters = validateAndStandardizeQueryParams(filters);
     const params = new URLSearchParams();
-    if (filters?.chapter_id) params.append('chapter_id', filters.chapter_id);
-    if (filters?.subject_id) params.append('subject_id', filters.subject_id);
-    if (filters?.paper) params.append('paper', filters.paper);
-    if (filters?.search) params.append('search', filters.search);
+    if (validatedFilters?.chapter_id) params.append('chapter_id', validatedFilters.chapter_id);
+    if (validatedFilters?.subject_id) params.append('subject_id', validatedFilters.subject_id);
+    if (validatedFilters?.paper) params.append('paper', validatedFilters.paper);
+    if (validatedFilters?.search) params.append('search', validatedFilters.search);
 
     const queryString = params.toString();
     const url = `/api/topics${queryString ? `?${queryString}` : ''}`;
 
     const response = await fetchWithRetry(getApiUrl(url));
     if (!response.ok) {
-      return getFallbackTopics(filters);
+      return getFallbackTopics(validatedFilters);
     }
     const data = await response.json();
     if (Array.isArray(data) && data.length > 0) {
       return data;
     }
-    return getFallbackTopics(filters);
+    return getFallbackTopics(validatedFilters);
   } catch (e) {
     return getFallbackTopics(filters);
   }

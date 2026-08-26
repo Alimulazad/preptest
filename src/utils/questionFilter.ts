@@ -19,12 +19,160 @@ export interface QuestionFilterCriteria {
 export function normalizeSubjectId(subjectId?: string | null): string {
   if (!subjectId) return '';
   const s = subjectId.trim().toLowerCase();
-  
+
   if (s.startsWith('phy') || s.includes('পদার্থ')) return 'physics';
   if (s.startsWith('chem') || s.includes('রসায়ন')) return 'chemistry';
   if (s.startsWith('math') || s.startsWith('mat') || s.includes('গণিত')) return 'math';
   if (s.startsWith('bio') || s.includes('জীব')) return 'biology';
-  return s;
+  return s.replace(/_1|_2|_p1|_p2/g, '');
+}
+
+/**
+ * Maps any subject key/alias and paper to a canonical subject ID format (e.g. 'physics_1', 'chemistry_2', 'math_1')
+ */
+export function standardizeSubjectId(subjectId?: string | null, paper?: string | null): string {
+  if (!subjectId) return '';
+  const s = subjectId.trim().toLowerCase();
+
+  let basePrefix = '';
+  if (s.startsWith('phy') || s.includes('পদার্থ')) basePrefix = 'physics';
+  else if (s.startsWith('chem') || s.includes('রসায়ন')) basePrefix = 'chemistry';
+  else if (s.startsWith('math') || s.startsWith('mat') || s.includes('গণিত')) basePrefix = 'math';
+  else if (s.startsWith('bio') || s.includes('জীব')) basePrefix = 'biology';
+  else basePrefix = s.replace(/_1|_2|_p1|_p2/g, '');
+
+  let p = normalizePaper(paper);
+  if (!p) {
+    if (s.includes('_1') || s.includes('p1') || s.includes('১ম') || s.includes('1st')) p = '1st';
+    else if (s.includes('_2') || s.includes('p2') || s.includes('২য়') || s.includes('2nd')) p = '2nd';
+  }
+
+  if (p === '1st') return `${basePrefix}_1`;
+  if (p === '2nd') return `${basePrefix}_2`;
+  return basePrefix;
+}
+
+/**
+ * Maps chapter input to standardized format (e.g. 'phy_p1_c2', 'chem_p2_c3', or preserves existing standardized ID)
+ */
+export function standardizeChapterId(chapterInput?: string | null, subjectId?: string | null, paper?: string | null): string {
+  if (!chapterInput || chapterInput === 'all') return '';
+  const ch = chapterInput.trim();
+
+  // Already standardized like phy_p1_c2 or phy1_ch2
+  if (/^[a-z]+_p[12]_c\d+$/i.test(ch)) {
+    return ch.toLowerCase();
+  }
+
+  // Handle formats like phy1_ch2 -> phy_p1_c2
+  const legacyMatch = ch.match(/([a-z]+)(\d)_ch(\d+)/i);
+  if (legacyMatch) {
+    const [, sub, p, cNum] = legacyMatch;
+    const shortSub = sub.toLowerCase().startsWith('phy') ? 'phy' : sub.toLowerCase().startsWith('chem') ? 'chem' : sub.toLowerCase().startsWith('mat') ? 'math' : 'bio';
+    return `${shortSub}_p${p}_c${cNum}`;
+  }
+
+  // Handle pure chapter numbers or 'c2', 'ch2'
+  const cNumMatch = ch.match(/(?:ch|c|অধ্যায়|অধ্যায়)?\s*(\d+)/i);
+  if (cNumMatch) {
+    const cNum = cNumMatch[1];
+    const stdSub = standardizeSubjectId(subjectId, paper);
+    let subPrefix = 'phy';
+    let pNum = '1';
+
+    if (stdSub.includes('chem')) subPrefix = 'chem';
+    else if (stdSub.includes('math')) subPrefix = 'math';
+    else if (stdSub.includes('bio')) subPrefix = 'bio';
+
+    if (stdSub.endsWith('_2') || normalizePaper(paper) === '2nd') {
+      pNum = '2';
+    }
+
+    return `${subPrefix}_p${pNum}_c${cNum}`;
+  }
+
+  return ch;
+}
+
+/**
+ * Maps topic input to standardized format (e.g. 'phy_p1_c2_t1', 'p1c2_s1' -> 'phy_p1_c2_t1')
+ */
+export function standardizeTopicId(
+  topicInput?: string | null,
+  chapterId?: string | null,
+  subjectId?: string | null,
+  paper?: string | null
+): string {
+  if (!topicInput || topicInput === 'all') return '';
+  const t = topicInput.trim();
+
+  // Already standardized like phy_p1_c2_t1
+  if (/^[a-z]+_p[12]_c\d+_t\d+$/i.test(t)) {
+    return t.toLowerCase();
+  }
+
+  // Legacy format like p1c2_s1 -> phy_p1_c2_t1
+  const legacyMatch = t.match(/p(\d)c(\d+)_s(\d+)/i);
+  if (legacyMatch) {
+    const [, p, c, tNum] = legacyMatch;
+    const stdSub = standardizeSubjectId(subjectId, paper);
+    let subPrefix = 'phy';
+    if (stdSub.includes('chem')) subPrefix = 'chem';
+    else if (stdSub.includes('math')) subPrefix = 'math';
+    else if (stdSub.includes('bio')) subPrefix = 'bio';
+    return `${subPrefix}_p${p}_c${c}_t${tNum}`;
+  }
+
+  // Pure topic code like T-01, T-1, t1, s1
+  const tNumMatch = t.match(/(?:t|s|t-|topic)?\s*(\d+)/i);
+  const stdChapter = standardizeChapterId(chapterId, subjectId, paper);
+  if (tNumMatch && stdChapter) {
+    const tNum = parseInt(tNumMatch[1], 10);
+    return `${stdChapter}_t${tNum}`;
+  }
+
+  return t;
+}
+
+/**
+ * Pre-query validation and mapping step for UI filters before calling database endpoints
+ */
+export function validateAndStandardizeQueryParams<T extends Record<string, any>>(filters?: T): T {
+  if (!filters) return {} as T;
+
+  const sanitized: Record<string, any> = { ...filters };
+
+  // 1. Standardize Subject
+  if (sanitized.subject_id) {
+    sanitized.subject_id = standardizeSubjectId(sanitized.subject_id, sanitized.paper);
+  }
+
+  // 2. Standardize Paper
+  if (sanitized.paper) {
+    sanitized.paper = normalizePaper(sanitized.paper);
+  }
+
+  // 3. Standardize Chapter
+  if (sanitized.chapter_id) {
+    sanitized.chapter_id = standardizeChapterId(sanitized.chapter_id, sanitized.subject_id, sanitized.paper);
+  }
+
+  // 4. Standardize Topic
+  if (sanitized.topic_id) {
+    sanitized.topic_id = standardizeTopicId(
+      sanitized.topic_id,
+      sanitized.chapter_id,
+      sanitized.subject_id,
+      sanitized.paper
+    );
+  }
+
+  // 5. Clean empty strings and 'all'
+  if (sanitized.chapter_id === 'all') delete sanitized.chapter_id;
+  if (sanitized.topic_id === 'all') delete sanitized.topic_id;
+  if (sanitized.category === 'all') delete sanitized.category;
+
+  return sanitized as T;
 }
 
 /**
