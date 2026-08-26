@@ -284,13 +284,13 @@ export function validateAndEnrichQuestion(
 
   const mapResult = smartMapTopicByName(topicIdRaw, topicNameRaw, chapterId, subjectId, dbTopics);
 
-  let finalTopicId = mapResult.matchedTopicId || '';
-  let finalTopicName = mapResult.matchedTopicName || topicNameRaw;
+  let finalTopicId = mapResult.matchedTopicId || topicIdRaw || '';
+  let finalTopicName = mapResult.matchedTopicName || topicNameRaw || finalTopicId;
   let smartMapped = mapResult.smartMapped;
   let smartMappedNote = mapResult.smartMappedNote;
 
-  if (mapResult.isInvalidId) {
-    warnings.push(`⚠️ Topic ID '${topicIdRaw}' ডাটাবেজে পাওয়া যায়নি (NULL হিসেবে সেভ হবে)`);
+  if (mapResult.isInvalidId && topicIdRaw) {
+    smartMappedNote = `⚡ কাস্টম/অনুপস্থিত টপিক ID '${topicIdRaw}' (ইমপোর্টের সময় স্বয়ংক্রিয়ভাবে তৈরি হবে)`;
   }
 
   let status: 'valid' | 'warning' | 'invalid' = 'valid';

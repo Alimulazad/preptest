@@ -1146,9 +1146,25 @@ export async function insertQuestion(q: Partial<Question>): Promise<Question> {
   let topic_name = q.topic_name || undefined;
 
   if (topic_id) {
-    const topicRec = await getTopicById(topic_id);
+    let topicRec = await getTopicById(topic_id);
+    if (!topicRec) {
+      try {
+        const tName = topic_name || topic_id;
+        topicRec = await insertTopic({
+          id: topic_id,
+          name: tName,
+          bangla_name: tName,
+          subject_id: subject_id as any,
+          paper: paper,
+          chapter_id: chapter_id,
+          star_rating: 3,
+          total_questions: 0,
+          completed_questions: 0,
+        });
+      } catch (e) {}
+    }
     if (topicRec) {
-      if (!topic_name) topic_name = topicRec.bangla_name;
+      if (!topic_name) topic_name = topicRec.bangla_name || topicRec.name;
       if (!q.chapter_id && topicRec.chapter_id) chapter_id = topicRec.chapter_id;
       if (!q.subject_id && topicRec.subject_id) subject_id = topicRec.subject_id as any;
       if (!q.paper && topicRec.paper) paper = topicRec.paper as '1st' | '2nd';
@@ -1326,7 +1342,23 @@ export async function bulkImportQuestions(rawQuestions: any[]): Promise<{ count:
     let topic_name = q.topic_name || q.topic || undefined;
 
     if (topic_id) {
-      const topicRec = memoryStore.topics.get(topic_id) || (await getTopicById(topic_id));
+      let topicRec = memoryStore.topics.get(topic_id) || (await getTopicById(topic_id));
+      if (!topicRec) {
+        try {
+          const tName = topic_name || topic_id;
+          topicRec = await insertTopic({
+            id: topic_id,
+            name: tName,
+            bangla_name: tName,
+            subject_id: subject_id as any,
+            paper: paper,
+            chapter_id: chapter_id,
+            star_rating: 3,
+            total_questions: 0,
+            completed_questions: 0,
+          });
+        } catch (e) {}
+      }
       if (topicRec) {
         if (!topic_name) topic_name = topicRec.bangla_name || topicRec.name;
         if (!q.chapter_id && !q.chapterId && topicRec.chapter_id) chapter_id = topicRec.chapter_id;

@@ -2,6 +2,7 @@ import React, { useState, useRef } from 'react';
 import { X, Save, AlertCircle, Sparkles, Check, Image as ImageIcon, UploadCloud, Trash2, Link as LinkIcon } from 'lucide-react';
 import { Question, QuestionSubject } from '../../types';
 import { SUBJECTS_DATA, CHAPTERS_DATA } from '../../data/admissionData';
+import { COMPREHENSIVE_CHAPTERS_DATA } from '../../data/subjectTopicsData';
 import MathText from '../MathText';
 
 interface AdminQuestionEditModalProps {
@@ -40,8 +41,15 @@ export const AdminQuestionEditModal: React.FC<AdminQuestionEditModalProps> = ({
 
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState('');
+  const [isCustomTopicMode, setIsCustomTopicMode] = useState<boolean>(false);
 
   const availableChapters = CHAPTERS_DATA.filter((ch) => ch.subject_id === formData.subject_id);
+
+  // Compute subtopics for selected chapter
+  const currentChapterData = COMPREHENSIVE_CHAPTERS_DATA.find(
+    (ch) => ch.id === formData.chapter_id || ch.subject_id === formData.subject_id
+  );
+  const availableSubtopics = currentChapterData?.subtopics || [];
 
   const handleSubjectChange = (subjectId: QuestionSubject) => {
     const subObj = SUBJECTS_DATA.find((s) => s.id === subjectId);
@@ -188,6 +196,70 @@ export const AdminQuestionEditModal: React.FC<AdminQuestionEditModalProps> = ({
                 ))}
               </select>
             </div>
+          </div>
+
+          {/* Topic & Custom Topic ID Section */}
+          <div className="p-3.5 rounded-2xl bg-indigo-50/50 border border-indigo-100 space-y-3">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-bold text-indigo-950 flex items-center gap-1.5">
+                🎯 টপিক নির্বাচন ও কাস্টম টপিক আইডি
+              </label>
+              <button
+                type="button"
+                onClick={() => setIsCustomTopicMode(!isCustomTopicMode)}
+                className="text-[11px] font-bold text-indigo-600 hover:text-indigo-800 underline cursor-pointer"
+              >
+                {isCustomTopicMode ? '← বিদ্যমান টপিক তালিকা' : '+ কাস্টম টপিক ইনপুট'}
+              </button>
+            </div>
+
+            {!isCustomTopicMode ? (
+              <div>
+                <select
+                  value={formData.topic_id || ''}
+                  onChange={(e) => {
+                    const selectedId = e.target.value;
+                    const foundSub = availableSubtopics.find((s) => s.id === selectedId);
+                    setFormData({
+                      ...formData,
+                      topic_id: selectedId || undefined,
+                      topic_name: foundSub ? foundSub.bangla_name || foundSub.name : formData.topic_name,
+                    });
+                  }}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs text-slate-900 bg-white focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600"
+                >
+                  <option value="">-- টপিক নির্বাচন করুন (ঐচ্ছিক) --</option>
+                  {availableSubtopics.map((st) => (
+                    <option key={st.id} value={st.id}>
+                      {st.bangla_name || st.name} ({st.id})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[11px] font-semibold text-slate-600 block mb-1">কাস্টম টপিক নাম</label>
+                  <input
+                    type="text"
+                    value={formData.topic_name || ''}
+                    onChange={(e) => setFormData({ ...formData, topic_name: e.target.value })}
+                    placeholder="যেমন: পরাবৈদ্যুতিক ধ্রুবক"
+                    className="w-full px-3 py-1.5 rounded-xl border border-slate-200 text-xs text-slate-900 bg-white focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600"
+                  />
+                </div>
+                <div>
+                  <label className="text-[11px] font-semibold text-slate-600 block mb-1">কাস্টম টপিক ID (Topic ID)</label>
+                  <input
+                    type="text"
+                    value={formData.topic_id || ''}
+                    onChange={(e) => setFormData({ ...formData, topic_id: e.target.value })}
+                    placeholder="যেমন: phy2_ch2_t_custom01"
+                    className="w-full px-3 py-1.5 rounded-xl border border-slate-200 text-xs text-slate-900 bg-white focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600 font-mono"
+                  />
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Question Text */}

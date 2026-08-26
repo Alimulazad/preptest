@@ -18,7 +18,11 @@ import {
   PlusCircle,
   HelpCircle,
   Trash2,
-  Eye
+  Eye,
+  Target,
+  Edit3,
+  CheckSquare,
+  Layers
 } from 'lucide-react';
 import { QuestionSubject, TopicRecord } from '../../types';
 import { SUBJECTS_DATA, CHAPTERS_DATA } from '../../data/admissionData';
@@ -93,6 +97,96 @@ export const AdminBulkImportModal: React.FC<AdminBulkImportModalProps> = ({
   const [autoCreateSuccessMsg, setAutoCreateSuccessMsg] = useState<string | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [previewFilter, setPreviewFilter] = useState<'all' | 'valid' | 'warning' | 'invalid'>('all');
+
+  // Selected question indices for bulk topic assignment
+  const [selectedQuestionIndices, setSelectedQuestionIndices] = useState<number[]>([]);
+
+  // Bulk & Specific Topic Assigner Tool State
+  const [assignTargetScope, setAssignTargetScope] = useState<'all' | 'selected' | 'range'>('all');
+  const [assignRangeStart, setAssignRangeStart] = useState<number>(1);
+  const [assignRangeEnd, setAssignRangeEnd] = useState<number>(10);
+  const [assignTopicMode, setAssignTopicMode] = useState<'existing' | 'custom'>('existing');
+  const [selectedTopicId, setSelectedTopicId] = useState<string>('');
+  const [customTopicName, setCustomTopicName] = useState<string>('');
+  const [customTopicId, setCustomTopicId] = useState<string>('');
+  const [editingRowIndex, setEditingRowIndex] = useState<number | null>(null);
+  const [inlineTopicInput, setInlineTopicInput] = useState<{ topic_id: string; topic_name: string }>({ topic_id: '', topic_name: '' });
+
+  const toggleSelectAll = () => {
+    if (selectedQuestionIndices.length === parsedQuestions.length) {
+      setSelectedQuestionIndices([]);
+    } else {
+      setSelectedQuestionIndices(parsedQuestions.map((_, i) => i));
+    }
+  };
+
+  const toggleSelectRow = (index: number) => {
+    if (selectedQuestionIndices.includes(index)) {
+      setSelectedQuestionIndices(selectedQuestionIndices.filter((i) => i !== index));
+    } else {
+      setSelectedQuestionIndices([...selectedQuestionIndices, index]);
+    }
+  };
+
+  const handleApplyTopicToQuestions = () => {
+    let targetTopicId = '';
+    let targetTopicName = '';
+
+    if (assignTopicMode === 'existing') {
+      if (!selectedTopicId) {
+        alert('অনুগ্রহ করে একটি টপিক নির্বাচন করুন!');
+        return;
+      }
+      const found = dbTopics.find((t) => t.id === selectedTopicId);
+      targetTopicId = selectedTopicId;
+      targetTopicName = found ? found.bangla_name || found.name || found.id : selectedTopicId;
+    } else {
+      if (!customTopicName.trim()) {
+        alert('অনুগ্রহ করে কাস্টম টপিকের নাম লিখুন!');
+        return;
+      }
+      targetTopicName = customTopicName.trim();
+      targetTopicId = customTopicId.trim() || customTopicName.trim().toLowerCase().replace(/\s+/g, '_');
+    }
+
+    // Determine target question indices
+    let targetIndices: number[] = [];
+    if (assignTargetScope === 'all') {
+      targetIndices = parsedQuestions.map((_, i) => i);
+    } else if (assignTargetScope === 'selected') {
+      if (selectedQuestionIndices.length === 0) {
+        alert('কোনো প্রশ্ন সিলেক্ট করা হয়নি! অনুগ্রহ করে টেবিল থেকে প্রশ্ন সিলেক্ট করুন।');
+        return;
+      }
+      targetIndices = [...selectedQuestionIndices];
+    } else if (assignTargetScope === 'range') {
+      const start = Math.max(1, assignRangeStart) - 1;
+      const end = Math.min(parsedQuestions.length, assignRangeEnd);
+      for (let i = start; i < end; i++) {
+        targetIndices.push(i);
+      }
+    }
+
+    if (targetIndices.length === 0) return;
+
+    const updated = parsedQuestions.map((q, idx) => {
+      if (targetIndices.includes(idx)) {
+        return {
+          ...q,
+          topic_id: targetTopicId,
+          topic_name: targetTopicName,
+          status: (q.status === 'invalid' && (!q.question_text || !q.options) ? 'invalid' : 'valid') as 'valid' | 'warning' | 'invalid',
+          isValid: true,
+          smartMappedNote: `🎯 টপিক ম্যানুয়ালি সেট করা হয়েছে: ${targetTopicName} (${targetTopicId})`,
+        };
+      }
+      return q;
+    });
+
+    setParsedQuestions(revalidateParsedItems(updated));
+    setAutoCreateSuccessMsg(`সফলভাবে ${targetIndices.length} টি প্রশ্নে '${targetTopicName}' [ID: ${targetTopicId}] টপিক সেট করা হয়েছে!`);
+    setTimeout(() => setAutoCreateSuccessMsg(null), 4000);
+  };
 
   // Load existing topics from Database on mount/open
   useEffect(() => {
@@ -185,14 +279,15 @@ export const AdminBulkImportModal: React.FC<AdminBulkImportModalProps> = ({
         topicsList
       );
 
-      const finalTopicId = mapRes.matchedTopicId || '';
-      const finalTopicName = mapRes.matchedTopicName || topicNameInput || '';
+      const finalTopicId = mapRes.matchedTopicId || topicIdInput || '';
+      const finalTopicName = mapRes.matchedTopicName || topicNameInput || finalTopicId;
 
       const issues = [...(q.validationIssues || [])];
       const warnings: string[] = [];
 
-      if (mapRes.isInvalidId) {
-        warnings.push(`⚠️ Topic ID '${topicIdInput}' ডাটাবেজে পাওয়া যায়নি (NULL হিসেবে সেভ হবে)`);
+      let smartMappedNote = mapRes.smartMappedNote || q.smartMappedNote;
+      if (mapRes.isInvalidId && topicIdInput) {
+        smartMappedNote = `⚡ কাস্টম/অনুপস্থিত টপিক ID '${topicIdInput}' (ইমপোর্টের সময় স্বয়ংক্রিয়ভাবে তৈরি হবে)`;
       }
 
       let status: 'valid' | 'warning' | 'invalid' = 'valid';
@@ -1081,6 +1176,11 @@ Ans: A
                   </h4>
                   <p className="text-xs text-slate-400 mt-0.5">
                     মোট <span className="text-white font-bold">{parsedQuestions.length}</span> টি আইটেম পার্স করা হয়েছে।
+                    {selectedQuestionIndices.length > 0 && (
+                      <span className="text-indigo-300 font-bold ml-2">
+                        ({selectedQuestionIndices.length} টি সিলেক্ট করা হয়েছে)
+                      </span>
+                    )}
                   </p>
                 </div>
 
@@ -1128,18 +1228,158 @@ Ans: A
                 </div>
               </div>
 
+              {/* TOPIC & TOPIC ID ASSIGNER TOOLBAR (REQUIREMENT 4) */}
+              <div className="p-4 rounded-2xl bg-indigo-50/80 border border-indigo-200 space-y-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <Target className="w-4 h-4 text-indigo-600 shrink-0" />
+                    <h4 className="text-xs font-bold text-indigo-950">
+                      🎯 টপিক ও কাস্টম টপিক ID অ্যাসাইনার (Assign Specific or Custom Topic & ID)
+                    </h4>
+                  </div>
+                  <div className="flex items-center gap-2 text-xs font-medium">
+                    <span className="text-slate-600 font-bold">টার্গেট প্রশ্নাংশ:</span>
+                    <select
+                      value={assignTargetScope}
+                      onChange={(e) => setAssignTargetScope(e.target.value as any)}
+                      className="px-2.5 py-1 rounded-lg border border-indigo-200 text-xs font-bold bg-white text-indigo-950 cursor-pointer"
+                    >
+                      <option value="all">সকল প্রশ্ন ({parsedQuestions.length} টি)</option>
+                      <option value="selected">সিলেক্ট করা প্রশ্ন ({selectedQuestionIndices.length} টি)</option>
+                      <option value="range">নির্দিষ্ট সীমার প্রশ্ন (Range)</option>
+                    </select>
+                  </div>
+                </div>
+
+                {/* Range Inputs if target scope === 'range' */}
+                {assignTargetScope === 'range' && (
+                  <div className="flex items-center gap-2 text-xs text-slate-700 bg-white p-2 rounded-xl border border-indigo-100 w-fit">
+                    <span className="font-semibold">প্রশ্ন নম্বর #</span>
+                    <input
+                      type="number"
+                      min={1}
+                      max={parsedQuestions.length}
+                      value={assignRangeStart}
+                      onChange={(e) => setAssignRangeStart(Math.max(1, parseInt(e.target.value) || 1))}
+                      className="w-16 px-2 py-0.5 rounded border border-slate-300 text-xs text-center font-bold"
+                    />
+                    <span className="font-semibold">থেকে #</span>
+                    <input
+                      type="number"
+                      min={1}
+                      max={parsedQuestions.length}
+                      value={assignRangeEnd}
+                      onChange={(e) => setAssignRangeEnd(Math.min(parsedQuestions.length, parseInt(e.target.value) || 1))}
+                      className="w-16 px-2 py-0.5 rounded border border-slate-300 text-xs text-center font-bold"
+                    />
+                    <span className="font-semibold">পর্যন্ত</span>
+                  </div>
+                )}
+
+                <div className="grid grid-cols-1 md:grid-cols-12 gap-3 items-end bg-white p-3 rounded-xl border border-indigo-100 shadow-xs">
+                  {/* Topic Source Toggle */}
+                  <div className="md:col-span-3">
+                    <label className="text-[11px] font-bold text-slate-700 block mb-1">টপিক উৎস (Source)</label>
+                    <div className="flex bg-slate-100 p-0.5 rounded-lg text-[11px] font-bold">
+                      <button
+                        type="button"
+                        onClick={() => setAssignTopicMode('existing')}
+                        className={`flex-1 py-1 rounded-md transition-colors cursor-pointer ${
+                          assignTopicMode === 'existing' ? 'bg-indigo-600 text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
+                        }`}
+                      >
+                        বিদ্যমান টপিক
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setAssignTopicMode('custom')}
+                        className={`flex-1 py-1 rounded-md transition-colors cursor-pointer ${
+                          assignTopicMode === 'custom' ? 'bg-indigo-600 text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
+                        }`}
+                      >
+                        + কাস্টম টপিক
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Input Fields */}
+                  {assignTopicMode === 'existing' ? (
+                    <div className="md:col-span-6">
+                      <label className="text-[11px] font-bold text-slate-700 block mb-1">
+                        উপলব্ধ টপিক নির্বাচন করুন ({dbTopics.length} টি)
+                      </label>
+                      <select
+                        value={selectedTopicId}
+                        onChange={(e) => setSelectedTopicId(e.target.value)}
+                        className="w-full px-3 py-1.5 rounded-lg border border-slate-200 text-xs text-slate-900 bg-white font-medium focus:ring-2 focus:ring-indigo-500/20"
+                      >
+                        <option value="">-- টপিক নির্বাচন করুন --</option>
+                        {dbTopics.map((t) => (
+                          <option key={t.id} value={t.id}>
+                            {t.bangla_name || t.name || t.id} [{t.id}]
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="md:col-span-3">
+                        <label className="text-[11px] font-bold text-slate-700 block mb-1">কাস্টম টপিকের নাম</label>
+                        <input
+                          type="text"
+                          value={customTopicName}
+                          onChange={(e) => setCustomTopicName(e.target.value)}
+                          placeholder="যেমন: ডাই-ইলেকট্রিক ও ধারকত্ব"
+                          className="w-full px-3 py-1.5 rounded-lg border border-slate-200 text-xs text-slate-900 bg-white focus:ring-2 focus:ring-indigo-500/20"
+                        />
+                      </div>
+                      <div className="md:col-span-3">
+                        <label className="text-[11px] font-bold text-slate-700 block mb-1">কাস্টম Topic ID</label>
+                        <input
+                          type="text"
+                          value={customTopicId}
+                          onChange={(e) => setCustomTopicId(e.target.value)}
+                          placeholder="যেমন: phy2_ch2_custom_01"
+                          className="w-full px-3 py-1.5 rounded-lg border border-slate-200 text-xs text-slate-900 bg-white font-mono focus:ring-2 focus:ring-indigo-500/20"
+                        />
+                      </div>
+                    </>
+                  )}
+
+                  {/* Apply Button */}
+                  <div className="md:col-span-3">
+                    <button
+                      type="button"
+                      onClick={handleApplyTopicToQuestions}
+                      className="w-full py-2 px-3 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold flex items-center justify-center gap-1.5 shadow-sm transition-all cursor-pointer"
+                    >
+                      <CheckCircle2 className="w-3.5 h-3.5" />
+                      <span>⚡ প্রয়োগ করুন (Apply Topic)</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
               {/* Table Container */}
-              <div className="border border-slate-200 rounded-2xl overflow-hidden bg-white max-h-80 overflow-y-auto">
+              <div className="border border-slate-200 rounded-2xl overflow-hidden bg-white max-h-96 overflow-y-auto">
                 <table className="w-full text-left text-xs border-collapse">
                   <thead className="bg-slate-50 text-slate-600 font-bold border-b border-slate-200 sticky top-0 z-10">
                     <tr>
-                      <th className="py-2.5 px-3 w-12 text-center">#</th>
+                      <th className="py-2.5 px-3 w-10 text-center">
+                        <input
+                          type="checkbox"
+                          checked={selectedQuestionIndices.length === parsedQuestions.length && parsedQuestions.length > 0}
+                          onChange={toggleSelectAll}
+                          className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                        />
+                      </th>
+                      <th className="py-2.5 px-3 w-10 text-center">#</th>
                       {importType === 'mcq' && (
                         <>
                           <th className="py-2.5 px-3 w-64">প্রশ্ন (Question & LaTeX)</th>
                           <th className="py-2.5 px-3 w-56">অপশনসমূহ (A, B, C, D)</th>
                           <th className="py-2.5 px-3 w-16 text-center">উত্তর</th>
-                          <th className="py-2.5 px-3 w-48">অধ্যায়, টপিক ও আইডি</th>
+                          <th className="py-2.5 px-3 w-60">অধ্যায়, টপিক ও আইডি</th>
                         </>
                       )}
                       {importType === 'written' && (
@@ -1147,7 +1387,7 @@ Ans: A
                           <th className="py-2.5 px-3 w-64">লিখিত প্রশ্ন</th>
                           <th className="py-2.5 px-3 w-64">উত্তর / সমাধান</th>
                           <th className="py-2.5 px-3 w-16 text-center">মার্কেট</th>
-                          <th className="py-2.5 px-3 w-48">অধ্যায় ও টপিক</th>
+                          <th className="py-2.5 px-3 w-60">অধ্যায় ও টপিক</th>
                         </>
                       )}
                       {importType === 'topic' && (
@@ -1171,71 +1411,146 @@ Ans: A
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
-                    {filteredPreview.map((q, idx) => (
-                      <tr
-                        key={q.id || idx}
-                        className={`hover:bg-slate-50 transition-colors ${
-                          q.status === 'invalid'
-                            ? 'bg-red-50/40'
-                            : q.status === 'warning'
-                            ? 'bg-amber-50/40'
-                            : ''
-                        }`}
-                      >
-                        <td className="py-2.5 px-3 text-center text-slate-400 font-bold">{idx + 1}</td>
-                        
-                        {/* MCQ Specific Columns */}
-                        {importType === 'mcq' && (
-                          <>
-                            <td className="py-2.5 px-3">
-                              <div className="font-medium text-slate-900 line-clamp-3 leading-relaxed">
-                                <MathText text={q.question_text || ''} />
-                              </div>
-                              {q.explanation && (
-                                <div className="text-[10px] text-slate-500 mt-1 line-clamp-1 italic">
-                                  💡 <MathText text={q.explanation} />
-                                </div>
-                              )}
-                            </td>
+                    {filteredPreview.map((q, idx) => {
+                      const realIndex = parsedQuestions.findIndex((item) => item === q || (item.id && item.id === q.id));
+                      const isSelected = selectedQuestionIndices.includes(realIndex !== -1 ? realIndex : idx);
 
-                            <td className="py-2.5 px-3 space-y-0.5 text-[11px]">
-                              <div className={q.correct_ans === 'A' ? 'font-bold text-emerald-700' : 'text-slate-600'}>
-                                (A) <MathText text={q.options?.A || ''} />
-                              </div>
-                              <div className={q.correct_ans === 'B' ? 'font-bold text-emerald-700' : 'text-slate-600'}>
-                                (B) <MathText text={q.options?.B || ''} />
-                              </div>
-                              <div className={q.correct_ans === 'C' ? 'font-bold text-emerald-700' : 'text-slate-600'}>
-                                (C) <MathText text={q.options?.C || ''} />
-                              </div>
-                              <div className={q.correct_ans === 'D' ? 'font-bold text-emerald-700' : 'text-slate-600'}>
-                                (D) <MathText text={q.options?.D || ''} />
-                              </div>
-                            </td>
-
-                            <td className="py-2.5 px-3 text-center">
-                              <span className="inline-block px-2.5 py-1 rounded-lg bg-emerald-100 text-emerald-800 font-bold text-xs">
-                                {q.correct_ans}
-                              </span>
-                            </td>
-
-                            <td className="py-2.5 px-3 text-[11px] text-slate-600">
-                              <div className="font-semibold text-slate-800">{q.chapter_name || q.chapter_id}</div>
-                              {q.topic_id ? (
-                                <div className="text-emerald-700 font-bold text-[10px]">
-                                  🎯 {q.topic_name || q.topic_id} ({q.topic_id})
+                      return (
+                        <tr
+                          key={q.id || idx}
+                          className={`hover:bg-slate-50 transition-colors ${
+                            isSelected ? 'bg-indigo-50/60' : q.status === 'invalid' ? 'bg-red-50/40' : q.status === 'warning' ? 'bg-amber-50/40' : ''
+                          }`}
+                        >
+                          <td className="py-2.5 px-3 text-center">
+                            <input
+                              type="checkbox"
+                              checked={isSelected}
+                              onChange={() => toggleSelectRow(realIndex !== -1 ? realIndex : idx)}
+                              className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                            />
+                          </td>
+                          <td className="py-2.5 px-3 text-center text-slate-400 font-bold">{idx + 1}</td>
+                          
+                          {/* MCQ Specific Columns */}
+                          {importType === 'mcq' && (
+                            <>
+                              <td className="py-2.5 px-3">
+                                <div className="font-medium text-slate-900 line-clamp-3 leading-relaxed">
+                                  <MathText text={q.question_text || ''} />
                                 </div>
-                              ) : (
-                                <div className="text-amber-600 text-[10px] font-semibold">⚠️ No topic matched</div>
-                              )}
-                              {q.smartMappedNote && (
-                                <div className="text-[9px] text-indigo-600 font-medium mt-0.5">
-                                  {q.smartMappedNote}
+                                {q.explanation && (
+                                  <div className="text-[10px] text-slate-500 mt-1 line-clamp-1 italic">
+                                    💡 <MathText text={q.explanation} />
+                                  </div>
+                                )}
+                              </td>
+
+                              <td className="py-2.5 px-3 space-y-0.5 text-[11px]">
+                                <div className={q.correct_ans === 'A' ? 'font-bold text-emerald-700' : 'text-slate-600'}>
+                                  (A) <MathText text={q.options?.A || ''} />
                                 </div>
-                              )}
-                            </td>
-                          </>
-                        )}
+                                <div className={q.correct_ans === 'B' ? 'font-bold text-emerald-700' : 'text-slate-600'}>
+                                  (B) <MathText text={q.options?.B || ''} />
+                                </div>
+                                <div className={q.correct_ans === 'C' ? 'font-bold text-emerald-700' : 'text-slate-600'}>
+                                  (C) <MathText text={q.options?.C || ''} />
+                                </div>
+                                <div className={q.correct_ans === 'D' ? 'font-bold text-emerald-700' : 'text-slate-600'}>
+                                  (D) <MathText text={q.options?.D || ''} />
+                                </div>
+                              </td>
+
+                              <td className="py-2.5 px-3 text-center">
+                                <span className="inline-block px-2.5 py-1 rounded-lg bg-emerald-100 text-emerald-800 font-bold text-xs">
+                                  {q.correct_ans}
+                                </span>
+                              </td>
+
+                              <td className="py-2.5 px-3 text-[11px] text-slate-600">
+                                <div className="font-semibold text-slate-800">{q.chapter_name || q.chapter_id}</div>
+                                {editingRowIndex === (realIndex !== -1 ? realIndex : idx) ? (
+                                  <div className="mt-1 space-y-1 bg-white p-2 rounded-lg border border-indigo-200">
+                                    <input
+                                      type="text"
+                                      value={inlineTopicInput.topic_name}
+                                      onChange={(e) => setInlineTopicInput({ ...inlineTopicInput, topic_name: e.target.value })}
+                                      placeholder="টপিক নাম"
+                                      className="w-full px-2 py-1 border rounded text-[11px]"
+                                    />
+                                    <input
+                                      type="text"
+                                      value={inlineTopicInput.topic_id}
+                                      onChange={(e) => setInlineTopicInput({ ...inlineTopicInput, topic_id: e.target.value })}
+                                      placeholder="Topic ID"
+                                      className="w-full px-2 py-1 border rounded text-[11px] font-mono"
+                                    />
+                                    <div className="flex justify-end gap-1 pt-1">
+                                      <button
+                                        type="button"
+                                        onClick={() => setEditingRowIndex(null)}
+                                        className="px-2 py-0.5 text-[10px] text-slate-600 bg-slate-100 rounded"
+                                      >
+                                        বাতিল
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          const targetIdx = realIndex !== -1 ? realIndex : idx;
+                                          const updated = parsedQuestions.map((item, i) => {
+                                            if (i === targetIdx) {
+                                              return {
+                                                ...item,
+                                                topic_id: inlineTopicInput.topic_id.trim() || undefined,
+                                                topic_name: inlineTopicInput.topic_name.trim() || undefined,
+                                                smartMappedNote: `🎯 ম্যানুয়ালি সেট করা হয়েছে: ${inlineTopicInput.topic_name}`,
+                                              };
+                                            }
+                                            return item;
+                                          });
+                                          setParsedQuestions(revalidateParsedItems(updated));
+                                          setEditingRowIndex(null);
+                                        }}
+                                        className="px-2 py-0.5 text-[10px] text-white bg-indigo-600 rounded font-bold"
+                                      >
+                                        সেভ
+                                      </button>
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <div className="flex items-center justify-between mt-0.5 gap-1">
+                                    {q.topic_id ? (
+                                      <div className="text-emerald-700 font-bold text-[10px]">
+                                        🎯 {q.topic_name || q.topic_id} ({q.topic_id})
+                                      </div>
+                                    ) : (
+                                      <div className="text-amber-600 text-[10px] font-semibold">⚠️ No topic matched</div>
+                                    )}
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        const targetIdx = realIndex !== -1 ? realIndex : idx;
+                                        setEditingRowIndex(targetIdx);
+                                        setInlineTopicInput({
+                                          topic_id: q.topic_id || '',
+                                          topic_name: q.topic_name || '',
+                                        });
+                                      }}
+                                      className="p-1 text-indigo-600 hover:text-indigo-800 hover:bg-indigo-50 rounded cursor-pointer"
+                                      title="টপিক পরিবর্তন করুন"
+                                    >
+                                      <Edit3 className="w-3 h-3" />
+                                    </button>
+                                  </div>
+                                )}
+                                {q.smartMappedNote && (
+                                  <div className="text-[9px] text-indigo-600 font-medium mt-0.5">
+                                    {q.smartMappedNote}
+                                  </div>
+                                )}
+                              </td>
+                            </>
+                          )}
 
                         {/* WRITTEN Specific Columns */}
                         {importType === 'written' && (
@@ -1344,7 +1659,8 @@ Ans: A
                           </button>
                         </td>
                       </tr>
-                    ))}
+                    );
+                  })}
                   </tbody>
                 </table>
               </div>
