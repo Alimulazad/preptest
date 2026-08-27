@@ -187,6 +187,28 @@ export const migrations: Migration[] = [
           is_active BOOLEAN DEFAULT TRUE
         );
 
+        -- Ensure columns exist even if table was pre-existing
+        ALTER TABLE written_questions ADD COLUMN IF NOT EXISTS subject_id VARCHAR(50);
+        ALTER TABLE written_questions ADD COLUMN IF NOT EXISTS subject_name VARCHAR(100);
+        ALTER TABLE written_questions ADD COLUMN IF NOT EXISTS paper VARCHAR(10);
+        ALTER TABLE written_questions ADD COLUMN IF NOT EXISTS chapter_id VARCHAR(50);
+        ALTER TABLE written_questions ADD COLUMN IF NOT EXISTS chapter_name VARCHAR(150);
+        ALTER TABLE written_questions ADD COLUMN IF NOT EXISTS topic_id VARCHAR(50);
+        ALTER TABLE written_questions ADD COLUMN IF NOT EXISTS topic_name VARCHAR(150);
+        ALTER TABLE written_questions ADD COLUMN IF NOT EXISTS question_number INTEGER;
+        ALTER TABLE written_questions ADD COLUMN IF NOT EXISTS question_text TEXT;
+        ALTER TABLE written_questions ADD COLUMN IF NOT EXISTS question_image_url TEXT;
+        ALTER TABLE written_questions ADD COLUMN IF NOT EXISTS explanation TEXT;
+        ALTER TABLE written_questions ADD COLUMN IF NOT EXISTS explanation_latex TEXT;
+        ALTER TABLE written_questions ADD COLUMN IF NOT EXISTS explanation_image_urls TEXT;
+        ALTER TABLE written_questions ADD COLUMN IF NOT EXISTS tags TEXT DEFAULT '[]';
+        ALTER TABLE written_questions ADD COLUMN IF NOT EXISTS category VARCHAR(30);
+        ALTER TABLE written_questions ADD COLUMN IF NOT EXISTS difficulty VARCHAR(20) DEFAULT 'medium';
+        ALTER TABLE written_questions ADD COLUMN IF NOT EXISTS star_rating SMALLINT DEFAULT 1;
+        ALTER TABLE written_questions ADD COLUMN IF NOT EXISTS created_at BIGINT;
+        ALTER TABLE written_questions ADD COLUMN IF NOT EXISTS updated_at BIGINT;
+        ALTER TABLE written_questions ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE;
+
         CREATE INDEX IF NOT EXISTS idx_written_questions_subject_chapter ON written_questions (subject_id, chapter_id);
         CREATE INDEX IF NOT EXISTS idx_written_questions_topic ON written_questions (topic_id);
         CREATE INDEX IF NOT EXISTS idx_written_questions_is_active ON written_questions (is_active);
@@ -268,6 +290,15 @@ export const migrations: Migration[] = [
           created_at BIGINT
         );
 
+        -- Ensure all subject columns exist in case table was pre-created
+        ALTER TABLE subjects ADD COLUMN IF NOT EXISTS name VARCHAR(100);
+        ALTER TABLE subjects ADD COLUMN IF NOT EXISTS bangla_name VARCHAR(100);
+        ALTER TABLE subjects ADD COLUMN IF NOT EXISTS paper VARCHAR(10);
+        ALTER TABLE subjects ADD COLUMN IF NOT EXISTS short_code VARCHAR(20);
+        ALTER TABLE subjects ADD COLUMN IF NOT EXISTS icon_name VARCHAR(50);
+        ALTER TABLE subjects ADD COLUMN IF NOT EXISTS order_index SMALLINT DEFAULT 0;
+        ALTER TABLE subjects ADD COLUMN IF NOT EXISTS created_at BIGINT;
+
         -- 2. Create chapters table
         CREATE TABLE IF NOT EXISTS chapters (
           id VARCHAR(50) PRIMARY KEY,
@@ -279,6 +310,15 @@ export const migrations: Migration[] = [
           total_topics INTEGER DEFAULT 0,
           created_at BIGINT
         );
+
+        -- Ensure all chapter columns exist in case table was pre-created
+        ALTER TABLE chapters ADD COLUMN IF NOT EXISTS subject_id VARCHAR(50);
+        ALTER TABLE chapters ADD COLUMN IF NOT EXISTS chapter_number SMALLINT;
+        ALTER TABLE chapters ADD COLUMN IF NOT EXISTS name VARCHAR(150);
+        ALTER TABLE chapters ADD COLUMN IF NOT EXISTS bangla_name VARCHAR(150);
+        ALTER TABLE chapters ADD COLUMN IF NOT EXISTS paper VARCHAR(10);
+        ALTER TABLE chapters ADD COLUMN IF NOT EXISTS total_topics INTEGER DEFAULT 0;
+        ALTER TABLE chapters ADD COLUMN IF NOT EXISTS created_at BIGINT;
 
         CREATE INDEX IF NOT EXISTS idx_chapters_subject ON chapters(subject_id);
 
@@ -303,8 +343,551 @@ export const migrations: Migration[] = [
           ('math_2', 'Higher Math 2nd Paper', 'উচ্চতর গণিত ২য় পত্র', '2nd', 'MATH-2', 'Sigma', 6, EXTRACT(EPOCH FROM NOW()) * 1000),
           ('biology_1', 'Biology 1st Paper', 'জীববিজ্ঞান ১ম পত্র', '1st', 'BIO-1', 'Dna', 7, EXTRACT(EPOCH FROM NOW()) * 1000),
           ('biology_2', 'Biology 2nd Paper', 'জীববিজ্ঞান ২য় পত্র', '2nd', 'BIO-2', 'Bug', 8, EXTRACT(EPOCH FROM NOW()) * 1000)
+        ON CONFLICT (id) DO UPDATE SET
+          name = EXCLUDED.name,
+          bangla_name = EXCLUDED.bangla_name,
+          paper = EXCLUDED.paper,
+          short_code = EXCLUDED.short_code,
+          icon_name = EXCLUDED.icon_name,
+          order_index = EXCLUDED.order_index;
+      `);
+    },
+  },
+  {
+    id: '008_taxonomy_hardening',
+    name: 'Taxonomy hardening: Data cleaning, deduplication, safe UNIQUE constraints, FKs, and health views',
+    up: async (client: pg.PoolClient) => {
+      logger.info('[Migration 008] Starting taxonomy hardening and data cleaning...');
+
+      // 1. Data Cleaning & Unicode Normalization
+      // Strips zero-width characters (ZWJ, ZWNJ, BOM) and trims redundant whitespace
+      await client.query(`
+        -- Clean subjects
+        UPDATE subjects
+        SET 
+          bangla_name = TRIM(regexp_replace(regexp_replace(bangla_name, '[\\u200B-\\u200D\\uFEFF]', '', 'g'), '\\s+', ' ', 'g')),
+          name = TRIM(regexp_replace(name, '\\s+', ' ', 'g'))
+        WHERE bangla_name IS NOT NULL;
+
+        -- Clean chapters
+        UPDATE chapters
+        SET 
+          bangla_name = TRIM(regexp_replace(regexp_replace(bangla_name, '[\\u200B-\\u200D\\uFEFF]', '', 'g'), '\\s+', ' ', 'g')),
+          name = TRIM(regexp_replace(name, '\\s+', ' ', 'g'))
+        WHERE bangla_name IS NOT NULL;
+
+        -- Clean topics
+        UPDATE topics
+        SET 
+          bangla_name = TRIM(regexp_replace(regexp_replace(bangla_name, '[\\u200B-\\u200D\\uFEFF]', '', 'g'), '\\s+', ' ', 'g')),
+          name = TRIM(regexp_replace(name, '\\s+', ' ', 'g'))
+        WHERE bangla_name IS NOT NULL;
+      `);
+
+      // 2. Ensure parent references exist before applying FK constraints
+      // A. Populate missing subject_id in topics if chapter exists
+      await client.query(`
+        UPDATE topics t
+        SET subject_id = c.subject_id
+        FROM chapters c
+        WHERE t.chapter_id = c.id AND (t.subject_id IS NULL OR t.subject_id = '');
+      `);
+
+      // B. Create placeholder chapters/subjects for orphan topics if any exist
+      await client.query(`
+        -- Insert missing subjects referenced by chapters
+        INSERT INTO subjects (id, name, bangla_name, paper, created_at)
+        SELECT DISTINCT c.subject_id, c.subject_id, c.subject_id, '1st', EXTRACT(EPOCH FROM NOW()) * 1000
+        FROM chapters c
+        LEFT JOIN subjects s ON c.subject_id = s.id
+        WHERE s.id IS NULL AND c.subject_id IS NOT NULL AND c.subject_id <> ''
+        ON CONFLICT (id) DO NOTHING;
+
+        -- Insert missing chapters referenced by topics
+        INSERT INTO chapters (id, subject_id, name, bangla_name, created_at)
+        SELECT DISTINCT t.chapter_id, COALESCE(t.subject_id, 'physics_1'), t.chapter_id, t.chapter_id, EXTRACT(EPOCH FROM NOW()) * 1000
+        FROM topics t
+        LEFT JOIN chapters c ON t.chapter_id = c.id
+        WHERE c.id IS NULL AND t.chapter_id IS NOT NULL AND t.chapter_id <> ''
         ON CONFLICT (id) DO NOTHING;
       `);
+
+      // 3. Deduplicate Topics under same (chapter_id, bangla_name)
+      // Find duplicates, re-point questions & written_questions to the surviving topic ID, then remove duplicates
+      const dedupResult = await client.query(`
+        WITH topic_groups AS (
+          SELECT 
+            id,
+            chapter_id,
+            bangla_name,
+            total_questions,
+            created_at,
+            ROW_NUMBER() OVER (
+              PARTITION BY chapter_id, bangla_name 
+              ORDER BY COALESCE(total_questions, 0) DESC, created_at ASC, id ASC
+            ) as row_num,
+            FIRST_VALUE(id) OVER (
+              PARTITION BY chapter_id, bangla_name 
+              ORDER BY COALESCE(total_questions, 0) DESC, created_at ASC, id ASC
+            ) as survivor_id
+          FROM topics
+        ),
+        duplicates AS (
+          SELECT id as duplicate_id, survivor_id
+          FROM topic_groups
+          WHERE row_num > 1
+        )
+        SELECT duplicate_id, survivor_id FROM duplicates;
+      `);
+
+      if (dedupResult.rows.length > 0) {
+        logger.info(`[Migration 008] Found ${dedupResult.rows.length} duplicate topics. Merging & re-pointing questions...`);
+
+        // Re-point MCQ questions
+        const mcqUpdateRes = await client.query(`
+          WITH topic_groups AS (
+            SELECT 
+              id,
+              chapter_id,
+              bangla_name,
+              ROW_NUMBER() OVER (
+                PARTITION BY chapter_id, bangla_name 
+                ORDER BY COALESCE(total_questions, 0) DESC, created_at ASC, id ASC
+              ) as row_num,
+              FIRST_VALUE(id) OVER (
+                PARTITION BY chapter_id, bangla_name 
+                ORDER BY COALESCE(total_questions, 0) DESC, created_at ASC, id ASC
+              ) as survivor_id
+            FROM topics
+          ),
+          duplicates AS (
+            SELECT id as duplicate_id, survivor_id
+            FROM topic_groups
+            WHERE row_num > 1
+          )
+          UPDATE questions q
+          SET topic_id = d.survivor_id
+          FROM duplicates d
+          WHERE q.topic_id = d.duplicate_id;
+        `);
+
+        // Re-point Written questions
+        const writtenUpdateRes = await client.query(`
+          WITH topic_groups AS (
+            SELECT 
+              id,
+              chapter_id,
+              bangla_name,
+              ROW_NUMBER() OVER (
+                PARTITION BY chapter_id, bangla_name 
+                ORDER BY COALESCE(total_questions, 0) DESC, created_at ASC, id ASC
+              ) as row_num,
+              FIRST_VALUE(id) OVER (
+                PARTITION BY chapter_id, bangla_name 
+                ORDER BY COALESCE(total_questions, 0) DESC, created_at ASC, id ASC
+              ) as survivor_id
+            FROM topics
+          ),
+          duplicates AS (
+            SELECT id as duplicate_id, survivor_id
+            FROM topic_groups
+            WHERE row_num > 1
+          )
+          UPDATE written_questions w
+          SET topic_id = d.survivor_id
+          FROM duplicates d
+          WHERE w.topic_id = d.duplicate_id;
+        `);
+
+        // Delete the duplicate topics
+        const deleteDupesRes = await client.query(`
+          WITH topic_groups AS (
+            SELECT 
+              id,
+              ROW_NUMBER() OVER (
+                PARTITION BY chapter_id, bangla_name 
+                ORDER BY COALESCE(total_questions, 0) DESC, created_at ASC, id ASC
+              ) as row_num
+            FROM topics
+          )
+          DELETE FROM topics
+          WHERE id IN (
+            SELECT id FROM topic_groups WHERE row_num > 1
+          );
+        `);
+
+        logger.info(
+          `[Migration 008] Cleaned ${deleteDupesRes.rowCount} duplicate topics. Re-pointed ${mcqUpdateRes.rowCount} MCQs and ${writtenUpdateRes.rowCount} Written questions.`
+        );
+      }
+
+      // Deduplicate Chapters under same (subject_id, bangla_name)
+      // Check duplicate chapters and use single CTE pattern for mapping updates and safe deletion
+      const dupChaptersCheck = await client.query(`
+        WITH chapter_groups AS (
+          SELECT 
+            id,
+            subject_id,
+            bangla_name,
+            ROW_NUMBER() OVER (
+              PARTITION BY subject_id, bangla_name 
+              ORDER BY created_at ASC, COALESCE(total_topics, 0) DESC, id ASC
+            ) as row_num,
+            FIRST_VALUE(id) OVER (
+              PARTITION BY subject_id, bangla_name 
+              ORDER BY created_at ASC, COALESCE(total_topics, 0) DESC, id ASC
+            ) as survivor_id
+          FROM chapters
+        ),
+        dup_chapters AS (
+          SELECT id as duplicate_id, survivor_id
+          FROM chapter_groups
+          WHERE row_num > 1
+        )
+        SELECT duplicate_id, survivor_id FROM dup_chapters;
+      `);
+
+      if (dupChaptersCheck.rows.length > 0) {
+        logger.info(`[Migration 008] Found ${dupChaptersCheck.rows.length} duplicate chapters. Merging references & re-pointing topics & questions...`);
+
+        // Update topics pointing to duplicate chapters
+        const updateTopicsChapRes = await client.query(`
+          WITH chapter_groups AS (
+            SELECT 
+              id,
+              subject_id,
+              bangla_name,
+              ROW_NUMBER() OVER (
+                PARTITION BY subject_id, bangla_name 
+                ORDER BY created_at ASC, COALESCE(total_topics, 0) DESC, id ASC
+              ) as row_num,
+              FIRST_VALUE(id) OVER (
+                PARTITION BY subject_id, bangla_name 
+                ORDER BY created_at ASC, COALESCE(total_topics, 0) DESC, id ASC
+              ) as survivor_id
+            FROM chapters
+          ),
+          dup_chapters AS (
+            SELECT id as duplicate_id, survivor_id
+            FROM chapter_groups
+            WHERE row_num > 1
+          )
+          UPDATE topics t
+          SET chapter_id = d.survivor_id
+          FROM dup_chapters d
+          WHERE t.chapter_id = d.duplicate_id;
+        `);
+
+        // Update questions pointing directly to duplicate chapters
+        const updateQuestionsChapRes = await client.query(`
+          WITH chapter_groups AS (
+            SELECT 
+              id,
+              subject_id,
+              bangla_name,
+              ROW_NUMBER() OVER (
+                PARTITION BY subject_id, bangla_name 
+                ORDER BY created_at ASC, COALESCE(total_topics, 0) DESC, id ASC
+              ) as row_num,
+              FIRST_VALUE(id) OVER (
+                PARTITION BY subject_id, bangla_name 
+                ORDER BY created_at ASC, COALESCE(total_topics, 0) DESC, id ASC
+              ) as survivor_id
+            FROM chapters
+          ),
+          dup_chapters AS (
+            SELECT id as duplicate_id, survivor_id
+            FROM chapter_groups
+            WHERE row_num > 1
+          )
+          UPDATE questions q
+          SET chapter_id = d.survivor_id
+          FROM dup_chapters d
+          WHERE q.chapter_id = d.duplicate_id;
+        `);
+
+        // Update written questions pointing directly to duplicate chapters
+        const updateWrittenChapRes = await client.query(`
+          WITH chapter_groups AS (
+            SELECT 
+              id,
+              subject_id,
+              bangla_name,
+              ROW_NUMBER() OVER (
+                PARTITION BY subject_id, bangla_name 
+                ORDER BY created_at ASC, COALESCE(total_topics, 0) DESC, id ASC
+              ) as row_num,
+              FIRST_VALUE(id) OVER (
+                PARTITION BY subject_id, bangla_name 
+                ORDER BY created_at ASC, COALESCE(total_topics, 0) DESC, id ASC
+              ) as survivor_id
+            FROM chapters
+          ),
+          dup_chapters AS (
+            SELECT id as duplicate_id, survivor_id
+            FROM chapter_groups
+            WHERE row_num > 1
+          )
+          UPDATE written_questions w
+          SET chapter_id = d.survivor_id
+          FROM dup_chapters d
+          WHERE w.chapter_id = d.duplicate_id;
+        `);
+
+        // Delete duplicate chapters safely
+        const deleteDupChaptersRes = await client.query(`
+          WITH chapter_groups AS (
+            SELECT 
+              id,
+              ROW_NUMBER() OVER (
+                PARTITION BY subject_id, bangla_name 
+                ORDER BY created_at ASC, COALESCE(total_topics, 0) DESC, id ASC
+              ) as row_num
+            FROM chapters
+          )
+          DELETE FROM chapters
+          WHERE id IN (SELECT id FROM chapter_groups WHERE row_num > 1);
+        `);
+
+        logger.info(
+          `[Migration 008] Cleaned ${deleteDupChaptersRes.rowCount} duplicate chapters. Re-pointed ${updateTopicsChapRes.rowCount} topics, ${updateQuestionsChapRes.rowCount} MCQs, and ${updateWrittenChapRes.rowCount} Written questions.`
+        );
+      }
+
+      // Deduplicate Subjects under same (bangla_name, paper) if any exist before applying UNIQUE constraint
+      const dupSubjectsCheck = await client.query(`
+        WITH subject_groups AS (
+          SELECT 
+            id,
+            bangla_name,
+            COALESCE(paper, '1st') as paper,
+            ROW_NUMBER() OVER (
+              PARTITION BY bangla_name, COALESCE(paper, '1st')
+              ORDER BY created_at ASC, id ASC
+            ) as row_num,
+            FIRST_VALUE(id) OVER (
+              PARTITION BY bangla_name, COALESCE(paper, '1st')
+              ORDER BY created_at ASC, id ASC
+            ) as survivor_id
+          FROM subjects
+        ),
+        dup_subjects AS (
+          SELECT id as duplicate_id, survivor_id
+          FROM subject_groups
+          WHERE row_num > 1
+        )
+        SELECT duplicate_id, survivor_id FROM dup_subjects;
+      `);
+
+      if (dupSubjectsCheck.rows.length > 0) {
+        logger.warn(`[Migration 008] Found ${dupSubjectsCheck.rows.length} duplicate subjects. Merging references & re-pointing chapters/topics...`);
+
+        await client.query(`
+          WITH subject_groups AS (
+            SELECT 
+              id,
+              bangla_name,
+              COALESCE(paper, '1st') as paper,
+              ROW_NUMBER() OVER (
+                PARTITION BY bangla_name, COALESCE(paper, '1st')
+                ORDER BY created_at ASC, id ASC
+              ) as row_num,
+              FIRST_VALUE(id) OVER (
+                PARTITION BY bangla_name, COALESCE(paper, '1st')
+                ORDER BY created_at ASC, id ASC
+              ) as survivor_id
+            FROM subjects
+          ),
+          dup_subjects AS (
+            SELECT id as duplicate_id, survivor_id
+            FROM subject_groups
+            WHERE row_num > 1
+          )
+          UPDATE chapters c
+          SET subject_id = d.survivor_id
+          FROM dup_subjects d
+          WHERE c.subject_id = d.duplicate_id;
+
+          WITH subject_groups AS (
+            SELECT 
+              id,
+              bangla_name,
+              COALESCE(paper, '1st') as paper,
+              ROW_NUMBER() OVER (
+                PARTITION BY bangla_name, COALESCE(paper, '1st')
+                ORDER BY created_at ASC, id ASC
+              ) as row_num,
+              FIRST_VALUE(id) OVER (
+                PARTITION BY bangla_name, COALESCE(paper, '1st')
+                ORDER BY created_at ASC, id ASC
+              ) as survivor_id
+            FROM subjects
+          ),
+          dup_subjects AS (
+            SELECT id as duplicate_id, survivor_id
+            FROM subject_groups
+            WHERE row_num > 1
+          )
+          UPDATE topics t
+          SET subject_id = d.survivor_id
+          FROM dup_subjects d
+          WHERE t.subject_id = d.duplicate_id;
+
+          WITH subject_groups AS (
+            SELECT 
+              id,
+              ROW_NUMBER() OVER (
+                PARTITION BY bangla_name, COALESCE(paper, '1st')
+                ORDER BY created_at ASC, id ASC
+              ) as row_num
+            FROM subjects
+          )
+          DELETE FROM subjects
+          WHERE id IN (SELECT id FROM subject_groups WHERE row_num > 1);
+        `);
+      }
+
+      // 4. Safe UNIQUE Constraints
+      await client.query(`
+        DO $$
+        BEGIN
+          -- Unique subject bangla_name + paper
+          IF NOT EXISTS (
+            SELECT 1 FROM pg_constraint WHERE conname = 'uq_subjects_bangla_paper'
+          ) THEN
+            ALTER TABLE subjects ADD CONSTRAINT uq_subjects_bangla_paper UNIQUE (bangla_name, paper);
+          END IF;
+
+          -- Unique chapter under subject
+          IF NOT EXISTS (
+            SELECT 1 FROM pg_constraint WHERE conname = 'uq_chapters_subject_bangla'
+          ) THEN
+            ALTER TABLE chapters ADD CONSTRAINT uq_chapters_subject_bangla UNIQUE (subject_id, bangla_name);
+          END IF;
+
+          -- Unique topic under chapter
+          IF NOT EXISTS (
+            SELECT 1 FROM pg_constraint WHERE conname = 'uq_topics_chapter_bangla'
+          ) THEN
+            ALTER TABLE topics ADD CONSTRAINT uq_topics_chapter_bangla UNIQUE (chapter_id, bangla_name);
+          END IF;
+        END $$;
+      `);
+
+      // 5. Safe Foreign Keys (NOT VALID first, then VALIDATE)
+      await client.query(`
+        DO $$
+        BEGIN
+          -- FK: chapters.subject_id -> subjects(id)
+          IF NOT EXISTS (
+            SELECT 1 FROM pg_constraint WHERE conname = 'fk_chapters_subject_id'
+          ) THEN
+            ALTER TABLE chapters 
+            ADD CONSTRAINT fk_chapters_subject_id 
+            FOREIGN KEY (subject_id) REFERENCES subjects(id) ON DELETE CASCADE NOT VALID;
+          END IF;
+
+          -- FK: topics.chapter_id -> chapters(id)
+          IF NOT EXISTS (
+            SELECT 1 FROM pg_constraint WHERE conname = 'fk_topics_chapter_id'
+          ) THEN
+            ALTER TABLE topics 
+            ADD CONSTRAINT fk_topics_chapter_id 
+            FOREIGN KEY (chapter_id) REFERENCES chapters(id) ON DELETE CASCADE NOT VALID;
+          END IF;
+
+          -- FK: topics.subject_id -> subjects(id)
+          IF NOT EXISTS (
+            SELECT 1 FROM pg_constraint WHERE conname = 'fk_topics_subject_id'
+          ) THEN
+            ALTER TABLE topics 
+            ADD CONSTRAINT fk_topics_subject_id 
+            FOREIGN KEY (subject_id) REFERENCES subjects(id) ON DELETE SET NULL NOT VALID;
+          END IF;
+        END $$;
+
+        -- Validate newly added foreign keys
+        ALTER TABLE chapters VALIDATE CONSTRAINT fk_chapters_subject_id;
+        ALTER TABLE topics VALIDATE CONSTRAINT fk_topics_chapter_id;
+        ALTER TABLE topics VALIDATE CONSTRAINT fk_topics_subject_id;
+      `);
+
+      // 6. Taxonomy Health Diagnostics Views
+      await client.query(`
+        -- View A: Duplicate Suspect Topics
+        CREATE OR REPLACE VIEW duplicate_suspect_topics AS
+        SELECT 
+          chapter_id,
+          bangla_name,
+          COUNT(*) AS duplicate_count,
+          ARRAY_AGG(id) AS topic_ids,
+          SUM(total_questions) AS combined_questions
+        FROM topics
+        GROUP BY chapter_id, bangla_name
+        HAVING COUNT(*) > 1;
+
+        -- View B: Zero Question Topics
+        CREATE OR REPLACE VIEW zero_question_topics AS
+        SELECT 
+          t.id,
+          t.subject_id,
+          t.chapter_id,
+          t.bangla_name,
+          t.name,
+          t.created_at
+        FROM topics t
+        LEFT JOIN questions q ON q.topic_id = t.id
+        LEFT JOIN written_questions w ON w.topic_id = t.id
+        WHERE q.id IS NULL AND w.id IS NULL AND (t.total_questions = 0 OR t.total_questions IS NULL);
+
+        -- View C: Orphan Topic IDs in Questions
+        CREATE OR REPLACE VIEW orphan_topic_ids AS
+        SELECT 
+          'mcq' AS question_type,
+          q.id AS question_id,
+          q.subject_id,
+          q.chapter_id,
+          q.topic_id,
+          q.topic_name,
+          q.question_text
+        FROM questions q
+        LEFT JOIN topics t ON q.topic_id = t.id
+        WHERE q.topic_id IS NOT NULL AND t.id IS NULL
+        UNION ALL
+        SELECT 
+          'written' AS question_type,
+          w.id AS question_id,
+          w.subject_id,
+          w.chapter_id,
+          w.topic_id,
+          w.topic_name,
+          w.question_text
+        FROM written_questions w
+        LEFT JOIN topics t ON w.topic_id = t.id
+        WHERE w.topic_id IS NOT NULL AND t.id IS NULL;
+      `);
+
+      logger.info('[Migration 008] ✅ Taxonomy hardening migration completed successfully.');
+    },
+    down: async (client: pg.PoolClient) => {
+      logger.info('[Migration 008] Rolling back taxonomy hardening migration...');
+      await client.query(`
+        -- Drop health views
+        DROP VIEW IF EXISTS orphan_topic_ids;
+        DROP VIEW IF EXISTS zero_question_topics;
+        DROP VIEW IF EXISTS duplicate_suspect_topics;
+
+        -- Drop foreign keys
+        ALTER TABLE topics DROP CONSTRAINT IF EXISTS fk_topics_subject_id;
+        ALTER TABLE topics DROP CONSTRAINT IF EXISTS fk_topics_chapter_id;
+        ALTER TABLE chapters DROP CONSTRAINT IF EXISTS fk_chapters_subject_id;
+
+        -- Drop unique constraints
+        ALTER TABLE topics DROP CONSTRAINT IF EXISTS uq_topics_chapter_bangla;
+        ALTER TABLE chapters DROP CONSTRAINT IF EXISTS uq_chapters_subject_bangla;
+        ALTER TABLE subjects DROP CONSTRAINT IF EXISTS uq_subjects_bangla_paper;
+      `);
+      logger.info('[Migration 008] Rollback completed.');
     },
   },
 ];

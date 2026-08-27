@@ -48,6 +48,8 @@ import {
 import { validateStrictJsonFormat } from '../../utils/jsonValidator';
 import {
   bulkImportQuestionsApi,
+  importQuestionsPreviewApi,
+  importQuestionsCommitApi,
   bulkImportWrittenQuestionsApi,
   bulkImportTopicsApi,
   bulkImportKnowledgeSnippetsApi,
@@ -671,7 +673,9 @@ Ans: A
           type: q.type || 'mcq',
         }));
 
-        const res = await bulkImportQuestionsApi(formatted);
+        const res = await importQuestionsCommitApi({
+          questions: formatted,
+        });
         onSuccess(res.count);
         onClose();
       } else if (importType === 'written') {

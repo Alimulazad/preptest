@@ -145,14 +145,14 @@ export function useInfiniteQuestions(
     },
     initialPageParam: undefined,
     getNextPageParam: (lastPage) => {
+      if (!lastPage.hasMore) return undefined;
       if (lastPage.nextCursor) {
         return lastPage.nextCursor;
       }
-      if (lastPage.hasMore && (lastPage.page ?? 1) < (lastPage.totalPages ?? 1)) {
-        return (lastPage.page ?? 1) + 1;
-      }
-      if (!lastPage.nextCursor && (lastPage.page ?? 1) < (lastPage.totalPages ?? 1)) {
-        return (lastPage.page ?? 1) + 1;
+      const currentPage = lastPage.page ?? 1;
+      const totalPages = lastPage.totalPages ?? 1;
+      if (currentPage < totalPages) {
+        return currentPage + 1;
       }
       return undefined;
     },
@@ -175,3 +175,60 @@ export function useQuestion(
     ...options,
   });
 }
+
+export interface QuestionCountItem {
+  total: number;
+  mcq: number;
+  written: number;
+}
+
+export interface QuestionCountsResponse {
+  totalQuestions: number;
+  totalMcq: number;
+  totalWritten: number;
+  bySubject: Record<string, QuestionCountItem>;
+  byCategory: Record<string, QuestionCountItem>;
+  bySubjectAndCategory: Record<string, Record<string, QuestionCountItem>>;
+  byChapter: Record<string, QuestionCountItem>;
+  byChapterAndCategory: Record<string, Record<string, QuestionCountItem>>;
+  byTopic: Record<string, QuestionCountItem>;
+  byTopicAndCategory: Record<string, Record<string, QuestionCountItem>>;
+}
+
+export async function fetchQuestionCounts(filters?: {
+  subject_id?: string;
+  category?: string;
+  chapter_id?: string;
+}): Promise<QuestionCountsResponse> {
+  const query = new URLSearchParams();
+  if (filters?.subject_id) query.append('subject_id', filters.subject_id);
+  if (filters?.category) query.append('category', filters.category);
+  if (filters?.chapter_id) query.append('chapter_id', filters.chapter_id);
+
+  const queryString = query.toString();
+  const url = getApiUrl(`/api/questions/counts${queryString ? `?${queryString}` : ''}`);
+  const res = await fetchWithRetry(url, {
+    headers: { Accept: 'application/json' },
+  });
+
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.error || `Failed to fetch question counts (${res.status})`);
+  }
+
+  return res.json();
+}
+
+export function useQuestionCounts(
+  filters?: { subject_id?: string; category?: string; chapter_id?: string },
+  options?: Omit<UseQueryOptions<QuestionCountsResponse, Error>, 'queryKey' | 'queryFn'>
+) {
+  return useQuery<QuestionCountsResponse, Error>({
+    queryKey: ['question-counts', filters],
+    queryFn: () => fetchQuestionCounts(filters),
+    staleTime: 1000 * 30, // 30s fresh
+    gcTime: 1000 * 60 * 10,
+    ...options,
+  });
+}
+

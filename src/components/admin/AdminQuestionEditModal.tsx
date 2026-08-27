@@ -3,6 +3,7 @@ import { X, Save, AlertCircle, Sparkles, Check, Image as ImageIcon, UploadCloud,
 import { Question, QuestionSubject } from '../../types';
 import { SUBJECTS_DATA, CHAPTERS_DATA } from '../../data/admissionData';
 import { COMPREHENSIVE_CHAPTERS_DATA } from '../../data/subjectTopicsData';
+import { CascadingTaxonomyPicker } from './CascadingTaxonomyPicker';
 import MathText from '../MathText';
 
 interface AdminQuestionEditModalProps {
@@ -165,101 +166,31 @@ export const AdminQuestionEditModal: React.FC<AdminQuestionEditModalProps> = ({
             </div>
           )}
 
-          {/* Subject & Chapter */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div>
-              <label className="text-xs font-bold text-slate-700 block mb-1">বিষয় নির্বাচন</label>
-              <select
-                value={formData.subject_id || 'physics_1'}
-                onChange={(e) => handleSubjectChange(e.target.value as QuestionSubject)}
-                className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs text-slate-900 bg-white focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600"
-              >
-                {SUBJECTS_DATA.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.bangla_name} ({s.paper})
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div>
-              <label className="text-xs font-bold text-slate-700 block mb-1">অধ্যায় নির্বাচন</label>
-              <select
-                value={formData.chapter_id || ''}
-                onChange={(e) => handleChapterChange(e.target.value)}
-                className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs text-slate-900 bg-white focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600"
-              >
-                {availableChapters.map((ch) => (
-                  <option key={ch.id} value={ch.id}>
-                    {ch.bangla_name} ({ch.name})
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
-
-          {/* Topic & Custom Topic ID Section */}
-          <div className="p-3.5 rounded-2xl bg-indigo-50/50 border border-indigo-100 space-y-3">
-            <div className="flex items-center justify-between">
-              <label className="text-xs font-bold text-indigo-950 flex items-center gap-1.5">
-                🎯 টপিক নির্বাচন ও কাস্টম টপিক আইডি
-              </label>
-              <button
-                type="button"
-                onClick={() => setIsCustomTopicMode(!isCustomTopicMode)}
-                className="text-[11px] font-bold text-indigo-600 hover:text-indigo-800 underline cursor-pointer"
-              >
-                {isCustomTopicMode ? '← বিদ্যমান টপিক তালিকা' : '+ কাস্টম টপিক ইনপুট'}
-              </button>
-            </div>
-
-            {!isCustomTopicMode ? (
-              <div>
-                <select
-                  value={formData.topic_id || ''}
-                  onChange={(e) => {
-                    const selectedId = e.target.value;
-                    const foundSub = availableSubtopics.find((s) => s.id === selectedId);
-                    setFormData({
-                      ...formData,
-                      topic_id: selectedId || undefined,
-                      topic_name: foundSub ? foundSub.bangla_name || foundSub.name : formData.topic_name,
-                    });
-                  }}
-                  className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs text-slate-900 bg-white focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600"
-                >
-                  <option value="">-- টপিক নির্বাচন করুন (ঐচ্ছিক) --</option>
-                  {availableSubtopics.map((st) => (
-                    <option key={st.id} value={st.id}>
-                      {st.bangla_name || st.name} ({st.id})
-                    </option>
-                  ))}
-                </select>
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="text-[11px] font-semibold text-slate-600 block mb-1">কাস্টম টপিক নাম</label>
-                  <input
-                    type="text"
-                    value={formData.topic_name || ''}
-                    onChange={(e) => setFormData({ ...formData, topic_name: e.target.value })}
-                    placeholder="যেমন: পরাবৈদ্যুতিক ধ্রুবক"
-                    className="w-full px-3 py-1.5 rounded-xl border border-slate-200 text-xs text-slate-900 bg-white focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600"
-                  />
-                </div>
-                <div>
-                  <label className="text-[11px] font-semibold text-slate-600 block mb-1">কাস্টম টপিক ID (Topic ID)</label>
-                  <input
-                    type="text"
-                    value={formData.topic_id || ''}
-                    onChange={(e) => setFormData({ ...formData, topic_id: e.target.value })}
-                    placeholder="যেমন: phy2_ch2_t_custom01"
-                    className="w-full px-3 py-1.5 rounded-xl border border-slate-200 text-xs text-slate-900 bg-white focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600 font-mono"
-                  />
-                </div>
-              </div>
-            )}
+          {/* Cascading Taxonomy Picker (Subject → Paper → Chapter → Topic) */}
+          <div className="p-4 rounded-2xl bg-indigo-50/60 dark:bg-slate-800/40 border border-indigo-100 dark:border-slate-700/60">
+            <CascadingTaxonomyPicker
+              value={{
+                subject_id: formData.subject_id,
+                paper: (formData.paper as any) || (formData.subject_id?.endsWith('_2') ? '2nd' : '1st'),
+                chapter_id: formData.chapter_id,
+                topic_id: formData.topic_id,
+                topic_name: formData.topic_name,
+              }}
+              onChange={(val) => {
+                setFormData((prev) => ({
+                  ...prev,
+                  subject_id: (val.subject_id as QuestionSubject) || prev.subject_id,
+                  paper: val.paper || (val.subject_id?.endsWith('_2') ? '2nd' : '1st'),
+                  chapter_id: val.chapter_id || prev.chapter_id,
+                  topic_id: val.topic_id,
+                  topic_name: val.topic_name,
+                }));
+              }}
+              layout="grid"
+              showTopic={true}
+              allowCreateTopic={true}
+              required={true}
+            />
           </div>
 
           {/* Question Text */}

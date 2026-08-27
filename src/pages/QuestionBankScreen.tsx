@@ -31,7 +31,7 @@ import { SubjectInfo, Question, WrittenQuestion, ExamCategory, QuestionSubject, 
 import { SUBJECTS_DATA, UNIVERSITIES_DATA, CHAPTERS_DATA } from '../data/admissionData';
 import { COMPREHENSIVE_CHAPTERS_DATA } from '../data/subjectTopicsData';
 import { INITIAL_WRITTEN_QUESTIONS } from '../data/writtenQuestionsData';
-import { useInfiniteQuestions } from '../hooks/useQuestions';
+import { useInfiniteQuestions, useQuestionCounts } from '../hooks/useQuestions';
 import { useInfiniteWrittenQuestions } from '../hooks/useWrittenQuestions';
 import QuestionCard from '../components/QuestionCard';
 import WrittenQuestionCard from '../components/WrittenQuestionCard';
@@ -242,6 +242,51 @@ export const QuestionBankScreen: React.FC<QuestionBankScreenProps> = ({
     return Array.from(extractedMap.values());
   }, [selectedSubject, questions]);
 
+  // ==========================================
+  // LIVE DATABASE QUESTION COUNTS (PostgreSQL / Realtime Sync)
+  // ==========================================
+  const { data: dbCounts } = useQuestionCounts();
+
+  const getSubjectTotalCount = (subId: string): number => {
+    if (!dbCounts?.bySubject) return 0;
+    const lower = subId.toLowerCase();
+    return dbCounts.bySubject[subId]?.total ?? dbCounts.bySubject[lower]?.total ?? 0;
+  };
+
+  const getCategoryCountForSubject = (subId: string, catId: ExamCategory): number => {
+    if (!dbCounts?.bySubjectAndCategory) return 0;
+    const lower = subId.toLowerCase();
+    const subMap = dbCounts.bySubjectAndCategory[subId] || dbCounts.bySubjectAndCategory[lower];
+    if (subMap && subMap[catId] !== undefined) {
+      return subMap[catId].total;
+    }
+    return 0;
+  };
+
+  const getChapterCount = (chapterId: string, category?: ExamCategory): number => {
+    if (!dbCounts) return 0;
+    const lower = chapterId.toLowerCase();
+    if (category && dbCounts.byChapterAndCategory) {
+      const chMap = dbCounts.byChapterAndCategory[chapterId] || dbCounts.byChapterAndCategory[lower];
+      if (chMap && chMap[category] !== undefined) {
+        return chMap[category].total;
+      }
+    }
+    return dbCounts.byChapter?.[chapterId]?.total ?? dbCounts.byChapter?.[lower]?.total ?? 0;
+  };
+
+  const getTopicCount = (topicId: string, category?: ExamCategory): number => {
+    if (!dbCounts) return 0;
+    const lower = topicId.toLowerCase();
+    if (category && dbCounts.byTopicAndCategory) {
+      const tMap = dbCounts.byTopicAndCategory[topicId] || dbCounts.byTopicAndCategory[lower];
+      if (tMap && tMap[category] !== undefined) {
+        return tMap[category].total;
+      }
+    }
+    return dbCounts.byTopic?.[topicId]?.total ?? dbCounts.byTopic?.[lower]?.total ?? 0;
+  };
+
   // Calculate real category counts for the selected subject
   const categoryCounts = useMemo(() => {
     const counts: Record<ExamCategory, number> = {
@@ -254,17 +299,12 @@ export const QuestionBankScreen: React.FC<QuestionBankScreenProps> = ({
 
     if (!selectedSubject) return counts;
 
-    const subjectQuestions = questions.filter(
-      (q) => q.subject_id === selectedSubject.id || q.subject_name.includes(selectedSubject.bangla_name)
-    );
-
     CATEGORY_CARDS_CONFIG.forEach((cat) => {
-      const matchCount = subjectQuestions.filter((q) => matchesCategory(q, cat.id)).length;
-      counts[cat.id] = matchCount > 0 ? matchCount : Math.max(1, Math.floor((subjectQuestions.length || 5) / 5));
+      counts[cat.id] = getCategoryCountForSubject(selectedSubject.id, cat.id);
     });
 
     return counts;
-  }, [selectedSubject, questions]);
+  }, [selectedSubject, dbCounts]);
 
   // Filtered Questions for Level 4 (Explorer View)
   const currentQuestions = useMemo(() => {
@@ -378,6 +418,32 @@ export const QuestionBankScreen: React.FC<QuestionBankScreenProps> = ({
   const isServerLoading = isWrittenMode
     ? (isWrittenLoading || (isWrittenFetching && !isFetchingNextWrittenPage))
     : (isMcqLoading || (isMcqFetching && !isFetchingNextMcqPage));
+
+  const activeList = isWrittenMode ? activeWrittenQuestions : activeMcqQuestions;
+
+  const totalQuestionsHeader = useMemo(() => {
+    const isWritten = isWrittenMode;
+    const serverTotal = isWritten
+      ? ((writtenData as any)?.pages?.[0]?.total)
+      : ((mcqData as any)?.pages?.[0]?.total);
+
+    if (typeof serverTotal === 'number') {
+      return serverTotal;
+    }
+
+    if (selectedTopicId && selectedCategory) {
+      const tCount = dbCounts?.byTopicAndCategory?.[selectedTopicId]?.[selectedCategory];
+      if (tCount) return isWritten ? tCount.written : tCount.mcq;
+    } else if (selectedChapter && selectedChapter !== 'all' && selectedCategory) {
+      const chCount = dbCounts?.byChapterAndCategory?.[selectedChapter.id]?.[selectedCategory];
+      if (chCount) return isWritten ? chCount.written : chCount.mcq;
+    } else if (selectedSubject && selectedCategory) {
+      const sCount = dbCounts?.bySubjectAndCategory?.[selectedSubject.id]?.[selectedCategory];
+      if (sCount) return isWritten ? sCount.written : sCount.mcq;
+    }
+
+    return activeList.length;
+  }, [isWrittenMode, writtenData, mcqData, selectedTopicId, selectedChapter, selectedSubject, selectedCategory, dbCounts, activeList.length]);
 
   const handleSelectChapter = (ch: Chapter) => {
     setSelectedChapter(ch);
@@ -526,7 +592,7 @@ export const QuestionBankScreen: React.FC<QuestionBankScreenProps> = ({
             </button>
 
             <span className="px-2.5 py-1 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-xs font-bold font-mono border border-slate-200/60 dark:border-slate-700">
-              {toBengaliNumber(activeList.length)} টি প্রশ্ন
+              {toBengaliNumber(totalQuestionsHeader)} টি প্রশ্ন
             </span>
           </div>
         </div>
@@ -580,7 +646,7 @@ export const QuestionBankScreen: React.FC<QuestionBankScreenProps> = ({
             {/* End of questions banner */}
             {!hasNext && activeList.length > 0 && (
               <div className="text-center py-6 text-xs text-slate-400 dark:text-slate-500 font-medium">
-                — সকল প্রশ্ন দেখানো হয়েছে ({toBengaliNumber(activeList.length)} টি) —
+                — সকল প্রশ্ন দেখানো হয়েছে ({toBengaliNumber(totalQuestionsHeader)} টি) —
               </div>
             )}
           </div>
@@ -610,13 +676,13 @@ export const QuestionBankScreen: React.FC<QuestionBankScreenProps> = ({
                       : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-300 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700'
                   }`}
                 >
-                  সকল অধ্যায়
+                  সকল অধ্যায় ({toBengaliNumber(getCategoryCountForSubject(selectedSubject.id, selectedCategory))})
                 </button>
 
                 {/* Individual Chapter Chips */}
                 {subjectChapters.map((ch) => {
                   const isSelected = selectedChapter !== 'all' && selectedChapter?.id === ch.id;
-                  const count = ch.total_questions || 50;
+                  const count = getChapterCount(ch.id, selectedCategory);
 
                   return (
                     <button
@@ -660,13 +726,13 @@ export const QuestionBankScreen: React.FC<QuestionBankScreenProps> = ({
                       : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-300 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700'
                   }`}
                 >
-                  সকল টপিক ({toBengaliNumber(selectedChapter.total_questions || 50)})
+                  সকল টপিক ({toBengaliNumber(getChapterCount(selectedChapter.id, selectedCategory))})
                 </button>
 
                 {/* Subtopic Chips for Selected Chapter */}
                 {(selectedChapter.subtopics || []).map((st) => {
                   const isSelected = selectedTopicId === st.id;
-                  const count = st.total_questions || 20;
+                  const count = getTopicCount(st.id, selectedCategory);
 
                   return (
                     <button
@@ -739,7 +805,7 @@ export const QuestionBankScreen: React.FC<QuestionBankScreenProps> = ({
         {/* 5 ExamCategory Cards Grid (Matching Screenshot 2) */}
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
           {CATEGORY_CARDS_CONFIG.map((cat) => {
-            const count = categoryCounts[cat.id] || 1;
+            const count = categoryCounts[cat.id] ?? 0;
 
             return (
               <button
@@ -763,7 +829,7 @@ export const QuestionBankScreen: React.FC<QuestionBankScreenProps> = ({
                 <div className="relative z-10">
                   <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-white/95 dark:bg-slate-900/90 text-slate-800 dark:text-slate-100 text-xs font-bold font-mono shadow-2xs">
                     <Pencil className="w-3 h-3 text-slate-600 dark:text-slate-400 stroke-[2.5]" />
-                    <span>{count}</span>
+                    <span>{toBengaliNumber(count)}</span>
                   </div>
                 </div>
               </button>
@@ -840,7 +906,7 @@ export const QuestionBankScreen: React.FC<QuestionBankScreenProps> = ({
       {activeTab === 'subject' && (
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 sm:gap-3">
           {filteredSubjects.map((sub) => {
-            const count = sub.totalQuestions || 150;
+            const count = getSubjectTotalCount(sub.id);
 
             return (
               <button
@@ -867,7 +933,7 @@ export const QuestionBankScreen: React.FC<QuestionBankScreenProps> = ({
                 <div className="relative z-10">
                   <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-white/95 dark:bg-slate-900/90 text-slate-800 dark:text-slate-100 text-xs font-bold font-mono shadow-2xs">
                     <Pencil className="w-3 h-3 text-slate-600 dark:text-slate-400 stroke-[2.5]" />
-                    <span>{count}</span>
+                    <span>{toBengaliNumber(count)}</span>
                   </div>
                 </div>
               </button>

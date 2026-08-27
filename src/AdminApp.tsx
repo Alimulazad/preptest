@@ -49,6 +49,7 @@ import { AdminSystemHealthWidget } from './components/admin/AdminSystemHealthWid
 import { AdminActiveUsersTab } from './components/admin/AdminActiveUsersTab';
 import { AdminNotificationsTab } from './components/admin/AdminNotificationsTab';
 import { AdminKnowledgeCarouselTab } from './components/admin/AdminKnowledgeCarouselTab';
+import { AdminTaxonomyHealthTab } from './components/admin/AdminTaxonomyHealthTab';
 import { useToast } from './context/ToastContext';
 
 export type AdminTabType =
@@ -59,6 +60,7 @@ export type AdminTabType =
   | 'extract'
   | 'drafts'
   | 'questions'
+  | 'taxonomy_health'
   | 'keys'
   | 'health';
 
@@ -505,6 +507,18 @@ export const AdminApp: React.FC = () => {
             </button>
 
             <button
+              onClick={() => setActiveTab('taxonomy_health')}
+              className={`flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs font-semibold transition cursor-pointer whitespace-nowrap ${
+                activeTab === 'taxonomy_health'
+                  ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/25'
+                  : 'text-slate-400 hover:text-white hover:bg-slate-900'
+              }`}
+            >
+              <Layers className="w-3.5 h-3.5 text-emerald-400" />
+              ট্যাক্সোনমি হেলথ ও মাস্টার চার্ট
+            </button>
+
+            <button
               onClick={() => setActiveTab('keys')}
               className={`flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs font-semibold transition cursor-pointer whitespace-nowrap ${
                 activeTab === 'keys'
@@ -587,6 +601,8 @@ export const AdminApp: React.FC = () => {
                 onRefresh={loadAllAdminData}
               />
             )}
+
+            {activeTab === 'taxonomy_health' && <AdminTaxonomyHealthTab />}
 
             {activeTab === 'keys' && (
               <AdminApiKeysTab

@@ -50,7 +50,7 @@ let isInitialized = false;
 let initPromise: Promise<void> | null = null;
 
 // In-Memory Data Storage (serves as resilient fallback if PostgreSQL is not running/connected)
-const memoryStore = {
+export const memoryStore = {
   questions: new Map<string, Question>(),
   writtenQuestions: new Map<string, WrittenQuestion>(),
   topics: new Map<string, TopicRecord>(),
@@ -71,7 +71,7 @@ const memoryStore = {
 };
 
 // Seed in-memory store initially
-function seedMemoryStore() {
+export function seedMemoryStore() {
   if (memoryStore.topics.size > 0) return;
 
   // 1. Topics
@@ -1127,30 +1127,152 @@ export interface PaginatedQuestionsResult {
   totalPages?: number;
 }
 
-export function decodeCursor(cursorStr?: string): { created_at?: number; id?: string } | null {
+export interface CursorPayload {
+  created_at?: number;
+  id?: string;
+  page?: number;
+}
+
+export function decodeCursor(cursorStr?: string): CursorPayload | null {
   if (!cursorStr) return null;
   try {
     const raw = Buffer.from(cursorStr, 'base64').toString('utf-8');
     const parsed = JSON.parse(raw);
-    if (parsed && (parsed.id || parsed.created_at)) return parsed;
+    if (parsed && typeof parsed === 'object') {
+      return {
+        created_at: typeof parsed.created_at === 'number' ? parsed.created_at : undefined,
+        id: parsed.id ? String(parsed.id) : undefined,
+        page: typeof parsed.page === 'number' ? parsed.page : undefined,
+      };
+    }
   } catch {
-    // If cursorStr is a timestamp number
     const num = Number(cursorStr);
     if (!isNaN(num) && num > 1000000) {
       return { created_at: num };
     }
     return { id: cursorStr };
   }
-  const num = Number(cursorStr);
-  if (!isNaN(num) && num > 1000000) {
-    return { created_at: num };
-  }
   return { id: cursorStr };
 }
 
-export function encodeCursor(created_at?: number, id?: string): string | null {
+export function encodeCursor(created_at?: number, id?: string, page?: number): string | null {
   if (!id) return null;
-  return Buffer.from(JSON.stringify({ created_at: created_at || Date.now(), id })).toString('base64');
+  return Buffer.from(JSON.stringify({ created_at: created_at || Date.now(), id, page })).toString('base64');
+}
+
+function buildCategoryWhereClause(category: string, pIdxStart: number): { clause: string; params: any[]; pIdxNext: number } {
+  const params: any[] = [];
+  let pIdx = pIdxStart;
+
+  if (category === 'engineering') {
+    const terms = ['engineering', 'buet', 'sust', 'ckruet', 'cuet', 'ruet', 'kuet', 'iut'];
+    const subClauses = [`category = $${pIdx++}`];
+    params.push('engineering');
+    for (const term of terms) {
+      subClauses.push(`tags ILIKE $${pIdx++}`);
+      params.push(`%${term}%`);
+    }
+    return { clause: ` AND (${subClauses.join(' OR ')})`, params, pIdxNext: pIdx };
+  } else if (category === 'medical') {
+    const terms = ['medical', 'mbbs', 'dental', 'mat'];
+    const subClauses = [`category = $${pIdx++}`];
+    params.push('medical');
+    for (const term of terms) {
+      subClauses.push(`tags ILIKE $${pIdx++}`);
+      params.push(`%${term}%`);
+    }
+    return { clause: ` AND (${subClauses.join(' OR ')})`, params, pIdxNext: pIdx };
+  } else if (category === 'varsity_a') {
+    const terms = ['varsity_a', 'du', 'varsity', 'gst', 'bup', 'ru', 'cu', 'ju', 'agri'];
+    const subClauses = [`category = $${pIdx++}`];
+    params.push('varsity_a');
+    for (const term of terms) {
+      subClauses.push(`tags ILIKE $${pIdx++}`);
+      params.push(`%${term}%`);
+    }
+    return { clause: ` AND (${subClauses.join(' OR ')})`, params, pIdxNext: pIdx };
+  } else if (category === 'academic') {
+    const terms = ['academic', 'board', 'hsc'];
+    const subClauses = [`category = $${pIdx++}`];
+    params.push('academic');
+    for (const term of terms) {
+      subClauses.push(`tags ILIKE $${pIdx++}`);
+      params.push(`%${term}%`);
+    }
+    return { clause: ` AND (${subClauses.join(' OR ')})`, params, pIdxNext: pIdx };
+  } else if (category === 'main_book') {
+    const terms = ['main_book', 'main book', 'textbook'];
+    const subClauses = [`category = $${pIdx++}`];
+    params.push('main_book');
+    for (const term of terms) {
+      subClauses.push(`tags ILIKE $${pIdx++}`);
+      params.push(`%${term}%`);
+    }
+    return { clause: ` AND (${subClauses.join(' OR ')})`, params, pIdxNext: pIdx };
+  } else {
+    const clause = ` AND (category = $${pIdx++} OR tags ILIKE $${pIdx++})`;
+    params.push(category, `%${category}%`);
+    return { clause, params, pIdxNext: pIdx };
+  }
+}
+
+function matchesCategoryInMemory(q: { category?: string; tags?: string[] }, category: string): boolean {
+  if (!category) return true;
+  const qCat = q.category || '';
+  const tagsStr = (q.tags || []).join(' ').toLowerCase();
+
+  if (category === 'engineering') {
+    return (
+      qCat === 'engineering' ||
+      tagsStr.includes('buet') ||
+      tagsStr.includes('engineering') ||
+      tagsStr.includes('sust') ||
+      tagsStr.includes('ckruet') ||
+      tagsStr.includes('cuet') ||
+      tagsStr.includes('ruet') ||
+      tagsStr.includes('kuet') ||
+      tagsStr.includes('iut')
+    );
+  }
+  if (category === 'medical') {
+    return (
+      qCat === 'medical' ||
+      tagsStr.includes('medical') ||
+      tagsStr.includes('mbbs') ||
+      tagsStr.includes('dental') ||
+      tagsStr.includes('mat')
+    );
+  }
+  if (category === 'varsity_a') {
+    return (
+      qCat === 'varsity_a' ||
+      tagsStr.includes('du') ||
+      tagsStr.includes('varsity') ||
+      tagsStr.includes('gst') ||
+      tagsStr.includes('bup') ||
+      tagsStr.includes('ru') ||
+      tagsStr.includes('cu') ||
+      tagsStr.includes('ju') ||
+      tagsStr.includes('agri')
+    );
+  }
+  if (category === 'academic') {
+    return (
+      qCat === 'academic' ||
+      tagsStr.includes('board') ||
+      tagsStr.includes('hsc') ||
+      tagsStr.includes('academic')
+    );
+  }
+  if (category === 'main_book') {
+    return (
+      qCat === 'main_book' ||
+      tagsStr.includes('main book') ||
+      tagsStr.includes('textbook') ||
+      tagsStr.includes('main_book')
+    );
+  }
+  return qCat === category || tagsStr.includes(category.toLowerCase());
 }
 
 export async function getAllQuestions(filters?: {
@@ -1167,10 +1289,10 @@ export async function getAllQuestions(filters?: {
   page?: number;
   limit?: number;
 }): Promise<PaginatedQuestionsResult> {
-  const page = Math.max(1, filters?.page || 1);
-  const limit = filters?.limit ? Math.max(1, filters.limit) : 0;
   const cursorData = decodeCursor(filters?.cursor);
-  const isCursorMode = Boolean(filters?.cursor !== undefined && !filters?.page);
+  const page = Math.max(1, filters?.page ?? (cursorData?.page ? cursorData.page + 1 : 1));
+  const limit = filters?.limit ? Math.max(1, filters.limit) : 15;
+  const offset = (page - 1) * limit;
 
   try {
     let whereClause = ' WHERE (is_active IS NULL OR is_active = TRUE)';
@@ -1198,8 +1320,10 @@ export async function getAllQuestions(filters?: {
       params.push(filters.paper);
     }
     if (filters?.category) {
-      whereClause += ` AND (category = $${pIdx++} OR tags ILIKE $${pIdx++})`;
-      params.push(filters.category, `%${filters.category}%`);
+      const catFilter = buildCategoryWhereClause(filters.category, pIdx);
+      whereClause += catFilter.clause;
+      params.push(...catFilter.params);
+      pIdx = catFilter.pIdxNext;
     }
     if (filters?.difficulty) {
       whereClause += ` AND difficulty = $${pIdx++}`;
@@ -1220,47 +1344,29 @@ export async function getAllQuestions(filters?: {
     const countRes = await query(countSql, params);
     const total = countRes && countRes.rows && countRes.rows[0] ? Number(countRes.rows[0].total) || 0 : 0;
 
-    // 2. Data query with Cursor OR Offset
-    let dataSql = `SELECT * FROM questions`;
+    // 2. Data query with LIMIT & OFFSET
+    let dataSql = `SELECT * FROM questions${whereClause} ORDER BY COALESCE(created_at, 0) DESC, id DESC`;
     const dataParams = [...params];
 
-    if (cursorData && cursorData.created_at) {
-      whereClause += ` AND (created_at < $${pIdx++} OR (created_at = $${pIdx++} AND id < $${pIdx++}))`;
-      dataParams.push(cursorData.created_at, cursorData.created_at, cursorData.id || '');
-    } else if (cursorData && cursorData.id) {
-      whereClause += ` AND id < $${pIdx++}`;
-      dataParams.push(cursorData.id);
-    }
-
-    dataSql += `${whereClause} ORDER BY created_at DESC NULLS LAST, id DESC`;
-
-    const fetchLimit = limit > 0 ? limit + 1 : 0;
-    if (fetchLimit > 0) {
-      if (!isCursorMode && !cursorData && page > 1) {
-        const offset = (page - 1) * limit;
-        dataSql += ` LIMIT $${pIdx++} OFFSET $${pIdx++}`;
-        dataParams.push(fetchLimit, offset);
-      } else {
-        dataSql += ` LIMIT $${pIdx++}`;
-        dataParams.push(fetchLimit);
-      }
-    }
+    const fetchLimit = limit + 1;
+    dataSql += ` LIMIT $${pIdx++} OFFSET $${pIdx++}`;
+    dataParams.push(fetchLimit, offset);
 
     const res = await query(dataSql, dataParams);
     if (res && res.rows) {
       let questions = res.rows.map(formatRowToQuestion);
       let hasMore = false;
-      if (limit > 0 && questions.length > limit) {
+      if (questions.length > limit) {
         hasMore = true;
         questions = questions.slice(0, limit);
       }
 
       const lastQuestion = questions[questions.length - 1];
       const nextCursor = hasMore && lastQuestion
-        ? encodeCursor((lastQuestion as any).created_at || Date.now(), lastQuestion.id)
+        ? encodeCursor((lastQuestion as any).created_at || Date.now(), lastQuestion.id, page)
         : null;
 
-      const totalPages = limit > 0 ? Math.ceil(total / limit) || 1 : 1;
+      const totalPages = Math.ceil(total / limit) || 1;
       return {
         data: questions,
         questions,
@@ -1268,7 +1374,7 @@ export async function getAllQuestions(filters?: {
         nextCursor,
         hasMore,
         page,
-        limit: limit > 0 ? limit : total,
+        limit,
         totalPages,
       };
     }
@@ -1292,9 +1398,7 @@ export async function getAllQuestions(filters?: {
     list = list.filter((q) => q.paper === filters.paper);
   }
   if (filters?.category) {
-    list = list.filter(
-      (q) => q.category === filters.category || (q.tags && q.tags.includes(filters.category!))
-    );
+    list = list.filter((q) => matchesCategoryInMemory(q, filters.category!));
   }
   if (filters?.difficulty) {
     list = list.filter((q) => q.difficulty === filters.difficulty);
@@ -1314,30 +1418,28 @@ export async function getAllQuestions(filters?: {
   }
 
   const total = list.length;
-  let startIndex = 0;
+  let startIndex = offset;
 
-  if (cursorData && cursorData.id) {
-    const idx = list.findIndex((q) => q.id === cursorData.id);
+  if (cursorData?.id) {
+    const idx = list.findIndex((q) => String(q.id) === String(cursorData.id));
     if (idx !== -1) {
       startIndex = idx + 1;
     }
-  } else if (!isCursorMode && page > 1 && limit > 0) {
-    startIndex = (page - 1) * limit;
   }
 
-  let questions = limit > 0 ? list.slice(startIndex, startIndex + limit + 1) : list;
+  let questions = list.slice(startIndex, startIndex + limit + 1);
   let hasMore = false;
-  if (limit > 0 && questions.length > limit) {
+  if (questions.length > limit) {
     hasMore = true;
     questions = questions.slice(0, limit);
   }
 
   const lastQuestion = questions[questions.length - 1];
   const nextCursor = hasMore && lastQuestion
-    ? encodeCursor((lastQuestion as any).created_at || Date.now(), lastQuestion.id)
+    ? encodeCursor((lastQuestion as any).created_at || Date.now(), lastQuestion.id, page)
     : null;
 
-  const totalPages = limit > 0 ? Math.ceil(total / limit) || 1 : 1;
+  const totalPages = Math.ceil(total / limit) || 1;
 
   return {
     data: questions,
@@ -1346,7 +1448,7 @@ export async function getAllQuestions(filters?: {
     nextCursor,
     hasMore,
     page,
-    limit: limit > 0 ? limit : total,
+    limit,
     totalPages,
   };
 }
@@ -1708,6 +1810,21 @@ export async function bulkImportQuestions(rawQuestions: any[]): Promise<{ count:
           Date.now(),
         ]);
       }
+
+      // Recalculate topic and chapter counters in same transaction
+      await client.query(`
+        UPDATE topics t
+        SET 
+          mcq_count = (SELECT COUNT(*)::int FROM questions q WHERE q.topic_id = t.id),
+          written_count = (SELECT COUNT(*)::int FROM written_questions w WHERE w.topic_id = t.id),
+          total_questions = (SELECT COUNT(*)::int FROM questions q WHERE q.topic_id = t.id) + (SELECT COUNT(*)::int FROM written_questions w WHERE w.topic_id = t.id);
+      `);
+
+      await client.query(`
+        UPDATE chapters c
+        SET total_topics = (SELECT COUNT(*)::int FROM topics t WHERE t.chapter_id = c.id);
+      `);
+
       await client.query('COMMIT');
     } catch (err) {
       await client.query('ROLLBACK');
@@ -2742,10 +2859,10 @@ export async function getAllWrittenQuestions(filters?: {
   page?: number;
   limit?: number;
 }): Promise<PaginatedWrittenQuestionsResult> {
-  const page = Math.max(1, filters?.page || 1);
-  const limit = filters?.limit ? Math.max(1, filters.limit) : 0;
   const cursorData = decodeCursor(filters?.cursor);
-  const isCursorMode = Boolean(filters?.cursor !== undefined && !filters?.page);
+  const page = Math.max(1, filters?.page ?? (cursorData?.page ? cursorData.page + 1 : 1));
+  const limit = filters?.limit ? Math.max(1, filters.limit) : 15;
+  const offset = (page - 1) * limit;
 
   try {
     let whereClause = ' WHERE is_active = TRUE';
@@ -2769,8 +2886,10 @@ export async function getAllWrittenQuestions(filters?: {
       params.push(filters.paper);
     }
     if (filters?.category) {
-      whereClause += ` AND (category = $${pIdx++} OR tags ILIKE $${pIdx++})`;
-      params.push(filters.category, `%${filters.category}%`);
+      const catFilter = buildCategoryWhereClause(filters.category, pIdx);
+      whereClause += catFilter.clause;
+      params.push(...catFilter.params);
+      pIdx = catFilter.pIdxNext;
     }
     if (filters?.difficulty) {
       whereClause += ` AND difficulty = $${pIdx++}`;
@@ -2791,47 +2910,29 @@ export async function getAllWrittenQuestions(filters?: {
     const countRes = await query(countSql, params);
     const total = countRes && countRes.rows && countRes.rows[0] ? Number(countRes.rows[0].total) || 0 : 0;
 
-    // 2. Get questions with cursor or offset
-    let dataSql = `SELECT * FROM written_questions`;
+    // 2. Get questions with LIMIT & OFFSET
+    let dataSql = `SELECT * FROM written_questions${whereClause} ORDER BY question_number ASC NULLS LAST, created_at DESC NULLS LAST, id DESC`;
     const dataParams = [...params];
 
-    if (cursorData && cursorData.created_at) {
-      whereClause += ` AND (created_at < $${pIdx++} OR (created_at = $${pIdx++} AND id < $${pIdx++}))`;
-      dataParams.push(cursorData.created_at, cursorData.created_at, cursorData.id || '');
-    } else if (cursorData && cursorData.id) {
-      whereClause += ` AND id < $${pIdx++}`;
-      dataParams.push(cursorData.id);
-    }
-
-    dataSql += `${whereClause} ORDER BY question_number ASC NULLS LAST, created_at DESC NULLS LAST, id DESC`;
-
-    const fetchLimit = limit > 0 ? limit + 1 : 0;
-    if (fetchLimit > 0) {
-      if (!isCursorMode && !cursorData && page > 1) {
-        const offset = (page - 1) * limit;
-        dataSql += ` LIMIT $${pIdx++} OFFSET $${pIdx++}`;
-        dataParams.push(fetchLimit, offset);
-      } else {
-        dataSql += ` LIMIT $${pIdx++}`;
-        dataParams.push(fetchLimit);
-      }
-    }
+    const fetchLimit = limit + 1;
+    dataSql += ` LIMIT $${pIdx++} OFFSET $${pIdx++}`;
+    dataParams.push(fetchLimit, offset);
 
     const res = await query(dataSql, dataParams);
     if (res && res.rows) {
       let questions = res.rows.map(formatRowToWrittenQuestion);
       let hasMore = false;
-      if (limit > 0 && questions.length > limit) {
+      if (questions.length > limit) {
         hasMore = true;
         questions = questions.slice(0, limit);
       }
 
       const lastQuestion = questions[questions.length - 1];
       const nextCursor = hasMore && lastQuestion
-        ? encodeCursor(lastQuestion.created_at || Date.now(), lastQuestion.id)
+        ? encodeCursor(lastQuestion.created_at || Date.now(), lastQuestion.id, page)
         : null;
 
-      const totalPages = limit > 0 ? Math.ceil(total / limit) || 1 : 1;
+      const totalPages = Math.ceil(total / limit) || 1;
       return {
         data: questions,
         questions,
@@ -2839,7 +2940,7 @@ export async function getAllWrittenQuestions(filters?: {
         nextCursor,
         hasMore,
         page,
-        limit: limit > 0 ? limit : total,
+        limit,
         totalPages,
       };
     }
@@ -2860,10 +2961,7 @@ export async function getAllWrittenQuestions(filters?: {
     list = list.filter((q) => q.paper === filters.paper);
   }
   if (filters?.category) {
-    const cat = filters.category.toLowerCase();
-    list = list.filter(
-      (q) => q.category === filters.category || (q.tags && q.tags.some((t) => t.toLowerCase().includes(cat)))
-    );
+    list = list.filter((q) => matchesCategoryInMemory(q, filters.category!));
   }
   if (filters?.difficulty) {
     list = list.filter((q) => q.difficulty === filters.difficulty);
@@ -2884,30 +2982,28 @@ export async function getAllWrittenQuestions(filters?: {
   }
 
   const total = list.length;
-  let startIndex = 0;
+  let startIndex = offset;
 
-  if (cursorData && cursorData.id) {
-    const idx = list.findIndex((q) => q.id === cursorData.id);
+  if (cursorData?.id) {
+    const idx = list.findIndex((q) => String(q.id) === String(cursorData.id));
     if (idx !== -1) {
       startIndex = idx + 1;
     }
-  } else if (!isCursorMode && page > 1 && limit > 0) {
-    startIndex = (page - 1) * limit;
   }
 
-  let questions = limit > 0 ? list.slice(startIndex, startIndex + limit + 1) : list;
+  let questions = list.slice(startIndex, startIndex + limit + 1);
   let hasMore = false;
-  if (limit > 0 && questions.length > limit) {
+  if (questions.length > limit) {
     hasMore = true;
     questions = questions.slice(0, limit);
   }
 
   const lastQuestion = questions[questions.length - 1];
   const nextCursor = hasMore && lastQuestion
-    ? encodeCursor(lastQuestion.created_at || Date.now(), lastQuestion.id)
+    ? encodeCursor(lastQuestion.created_at || Date.now(), lastQuestion.id, page)
     : null;
 
-  const totalPages = limit > 0 ? Math.ceil(total / limit) || 1 : 1;
+  const totalPages = Math.ceil(total / limit) || 1;
 
   return {
     data: questions,
@@ -2916,7 +3012,7 @@ export async function getAllWrittenQuestions(filters?: {
     nextCursor,
     hasMore,
     page,
-    limit: limit > 0 ? limit : total,
+    limit,
     totalPages,
   };
 }
@@ -3096,3 +3192,362 @@ export async function bulkImportKnowledgeSnippets(items: Partial<KnowledgeSnippe
   }
   return imported;
 }
+
+// ---------------- High-Performance Aggregated Question Counts ----------------
+
+export interface QuestionCountItem {
+  total: number;
+  mcq: number;
+  written: number;
+}
+
+export interface QuestionCountsResponse {
+  totalQuestions: number;
+  totalMcq: number;
+  totalWritten: number;
+  bySubject: Record<string, QuestionCountItem>;
+  byCategory: Record<string, QuestionCountItem>;
+  bySubjectAndCategory: Record<string, Record<string, QuestionCountItem>>;
+  byChapter: Record<string, QuestionCountItem>;
+  byChapterAndCategory: Record<string, Record<string, QuestionCountItem>>;
+  byTopic: Record<string, QuestionCountItem>;
+  byTopicAndCategory: Record<string, Record<string, QuestionCountItem>>;
+}
+
+export function extractSubjectAliases(subjectId?: string): string[] {
+  if (!subjectId) return [];
+  const list = new Set<string>([subjectId.toLowerCase().trim()]);
+  const s = subjectId.toLowerCase().trim();
+
+  // physics_1 <-> physics1, phy_1, phy1, physics_p1
+  const m = s.match(/^([a-z_]+?)(?:_p|_paper|paper|p|_)?(\d)$/i);
+  if (m) {
+    const base = m[1].replace(/_/g, '');
+    const paper = m[2];
+    list.add(`${base}_${paper}`);
+    list.add(`${base}${paper}`);
+    list.add(`${base}_p${paper}`);
+    list.add(`${base}_paper_${paper}`);
+
+    const map: Record<string, string[]> = {
+      phy: ['physics'],
+      physics: ['phy'],
+      chem: ['chemistry'],
+      chemistry: ['chem'],
+      math: ['higher_math', 'highermath', 'maths'],
+      highermath: ['math', 'higher_math'],
+      higher_math: ['math', 'highermath'],
+      bio: ['biology'],
+      biology: ['bio'],
+      botany: ['biology_1', 'bio_1'],
+      zoology: ['biology_2', 'bio_2'],
+    };
+
+    if (map[base]) {
+      for (const alt of map[base]) {
+        list.add(`${alt}_${paper}`);
+        list.add(`${alt}${paper}`);
+        list.add(`${alt}_p${paper}`);
+      }
+    }
+  }
+  return Array.from(list);
+}
+
+export function extractChapterAliases(chapterId?: string): string[] {
+  if (!chapterId) return [];
+  const list = new Set<string>([chapterId.toLowerCase().trim()]);
+  const ch = chapterId.toLowerCase().trim();
+
+  // Format: phy1_ch1, bio1_ch12
+  const m1 = ch.match(/^([a-z]+)(\d)_ch(\d+)$/i);
+  if (m1) {
+    const base = m1[1];
+    const paper = m1[2];
+    const cNum = m1[3];
+    list.add(`${base}_p${paper}_c${cNum}`);
+    list.add(`${base}_p${paper}_ch${cNum}`);
+    list.add(`${base}${paper}_c${cNum}`);
+    list.add(`${base}${paper}_ch${cNum}`);
+    list.add(`${base}_${paper}_c${cNum}`);
+    list.add(`${base}_${paper}_ch${cNum}`);
+  }
+
+  // Format: phy_p1_c1, bio_p1_c1
+  const m2 = ch.match(/^([a-z]+)_p(\d)_c(?:h)?(\d+)$/i);
+  if (m2) {
+    const base = m2[1];
+    const paper = m2[2];
+    const cNum = m2[3];
+    list.add(`${base}${paper}_ch${cNum}`);
+    list.add(`${base}${paper}_c${cNum}`);
+    list.add(`${base}_${paper}_ch${cNum}`);
+    list.add(`${base}_${paper}_c${cNum}`);
+  }
+
+  return Array.from(list);
+}
+
+export function extractMatchedCategoryKeys(cat?: string, tags?: string[] | string): string[] {
+  const cats = new Set<string>();
+  const qCat = (cat || '').toLowerCase().trim();
+  let tagsStr = '';
+  if (Array.isArray(tags)) {
+    tagsStr = tags.join(' ').toLowerCase();
+  } else if (typeof tags === 'string') {
+    tagsStr = tags.toLowerCase();
+  }
+
+  // 1. Varsity A
+  if (
+    qCat === 'varsity_a' ||
+    qCat === 'varsity' ||
+    tagsStr.includes('varsity_a') ||
+    tagsStr.includes('du') ||
+    tagsStr.includes('varsity') ||
+    tagsStr.includes('gst') ||
+    tagsStr.includes('bup') ||
+    tagsStr.includes('ru') ||
+    tagsStr.includes('cu') ||
+    tagsStr.includes('ju') ||
+    tagsStr.includes('agri')
+  ) {
+    cats.add('varsity_a');
+  }
+
+  // 2. Engineering
+  if (
+    qCat === 'engineering' ||
+    tagsStr.includes('engineering') ||
+    tagsStr.includes('buet') ||
+    tagsStr.includes('sust') ||
+    tagsStr.includes('ckruet') ||
+    tagsStr.includes('cuet') ||
+    tagsStr.includes('ruet') ||
+    tagsStr.includes('kuet') ||
+    tagsStr.includes('iut')
+  ) {
+    cats.add('engineering');
+  }
+
+  // 3. Medical
+  if (
+    qCat === 'medical' ||
+    tagsStr.includes('medical') ||
+    tagsStr.includes('mbbs') ||
+    tagsStr.includes('dental') ||
+    tagsStr.includes('mat')
+  ) {
+    cats.add('medical');
+  }
+
+  // 4. Academic
+  if (
+    qCat === 'academic' ||
+    tagsStr.includes('academic') ||
+    tagsStr.includes('board') ||
+    tagsStr.includes('hsc') ||
+    tagsStr.includes('dhaka board')
+  ) {
+    cats.add('academic');
+  }
+
+  // 5. Main Book
+  if (
+    qCat === 'main_book' ||
+    tagsStr.includes('main_book') ||
+    tagsStr.includes('main book') ||
+    tagsStr.includes('textbook') ||
+    tagsStr.includes('মূলবই') ||
+    tagsStr.includes('অনুশীলনী')
+  ) {
+    cats.add('main_book');
+  }
+
+  if (qCat && ['varsity_a', 'engineering', 'medical', 'academic', 'main_book'].includes(qCat)) {
+    cats.add(qCat);
+  }
+
+  if (cats.size === 0) {
+    cats.add('varsity_a');
+  }
+
+  return Array.from(cats);
+}
+
+let cachedCounts: { timestamp: number; data: QuestionCountsResponse } | null = null;
+const COUNTS_CACHE_TTL_MS = 5000; // 5 seconds cache for blazing fast performance
+
+export function invalidateQuestionCountsCache() {
+  cachedCounts = null;
+}
+
+export async function getQuestionCounts(filters?: {
+  subject_id?: string;
+  category?: string;
+  chapter_id?: string;
+}): Promise<QuestionCountsResponse> {
+  const now = Date.now();
+  if (cachedCounts && now - cachedCounts.timestamp < COUNTS_CACHE_TTL_MS && !filters?.subject_id && !filters?.category && !filters?.chapter_id) {
+    return cachedCounts.data;
+  }
+
+  const bySubject: Record<string, QuestionCountItem> = {};
+  const byCategory: Record<string, QuestionCountItem> = {
+    varsity_a: { total: 0, mcq: 0, written: 0 },
+    engineering: { total: 0, mcq: 0, written: 0 },
+    medical: { total: 0, mcq: 0, written: 0 },
+    academic: { total: 0, mcq: 0, written: 0 },
+    main_book: { total: 0, mcq: 0, written: 0 },
+  };
+  const bySubjectAndCategory: Record<string, Record<string, QuestionCountItem>> = {};
+  const byChapter: Record<string, QuestionCountItem> = {};
+  const byChapterAndCategory: Record<string, Record<string, QuestionCountItem>> = {};
+  const byTopic: Record<string, QuestionCountItem> = {};
+  const byTopicAndCategory: Record<string, Record<string, QuestionCountItem>> = {};
+
+  let totalMcq = 0;
+  let totalWritten = 0;
+
+  const incrementItem = (obj: Record<string, QuestionCountItem>, key: string, isWritten: boolean) => {
+    if (!key) return;
+    if (!obj[key]) {
+      obj[key] = { total: 0, mcq: 0, written: 0 };
+    }
+    obj[key].total++;
+    if (isWritten) {
+      obj[key].written++;
+    } else {
+      obj[key].mcq++;
+    }
+  };
+
+  const incrementNested = (
+    parentObj: Record<string, Record<string, QuestionCountItem>>,
+    parentKey: string,
+    childKey: string,
+    isWritten: boolean
+  ) => {
+    if (!parentKey || !childKey) return;
+    if (!parentObj[parentKey]) {
+      parentObj[parentKey] = {};
+    }
+    if (!parentObj[parentKey][childKey]) {
+      parentObj[parentKey][childKey] = { total: 0, mcq: 0, written: 0 };
+    }
+    parentObj[parentKey][childKey].total++;
+    if (isWritten) {
+      parentObj[parentKey][childKey].written++;
+    } else {
+      parentObj[parentKey][childKey].mcq++;
+    }
+  };
+
+  // Helper to ingest a question row
+  const processQuestion = (q: {
+    subject_id?: string;
+    chapter_id?: string;
+    topic_id?: string;
+    category?: string;
+    tags?: any;
+  }, isWritten: boolean) => {
+    if (isWritten) totalWritten++;
+    else totalMcq++;
+
+    const categories = extractMatchedCategoryKeys(q.category, q.tags);
+    const subAliases = extractSubjectAliases(q.subject_id);
+    const chAliases = extractChapterAliases(q.chapter_id);
+    const topicId = q.topic_id ? q.topic_id.trim() : null;
+
+    // Overall Category Counts
+    for (const cat of categories) {
+      incrementItem(byCategory, cat, isWritten);
+    }
+
+    // Subject Counts & Subject+Category Counts
+    for (const sub of subAliases) {
+      incrementItem(bySubject, sub, isWritten);
+      for (const cat of categories) {
+        incrementNested(bySubjectAndCategory, sub, cat, isWritten);
+      }
+    }
+
+    // Chapter Counts & Chapter+Category Counts
+    for (const ch of chAliases) {
+      incrementItem(byChapter, ch, isWritten);
+      for (const cat of categories) {
+        incrementNested(byChapterAndCategory, ch, cat, isWritten);
+      }
+    }
+
+    // Topic Counts & Topic+Category Counts
+    if (topicId) {
+      incrementItem(byTopic, topicId, isWritten);
+      for (const cat of categories) {
+        incrementNested(byTopicAndCategory, topicId, cat, isWritten);
+      }
+    }
+  };
+
+  // 1. Process MCQ Questions
+  let fetchedFromDb = false;
+  if (isPgConnected) {
+    try {
+      const mcqRes = await query(
+        'SELECT subject_id, chapter_id, topic_id, category, tags FROM questions WHERE is_active IS NULL OR is_active = TRUE'
+      );
+      if (mcqRes && Array.isArray(mcqRes.rows)) {
+        for (const row of mcqRes.rows) {
+          processQuestion(row, false);
+        }
+      }
+
+      const wqRes = await query(
+        'SELECT subject_id, chapter_id, topic_id, category, tags FROM written_questions WHERE is_active IS NULL OR is_active = TRUE'
+      );
+      if (wqRes && Array.isArray(wqRes.rows)) {
+        for (const row of wqRes.rows) {
+          processQuestion(row, true);
+        }
+      }
+
+      fetchedFromDb = true;
+    } catch (e) {
+      console.warn('Error reading aggregated counts from PostgreSQL, falling back to memory store:', e);
+    }
+  }
+
+  // 2. Memory Store Fallback
+  if (!fetchedFromDb) {
+    for (const q of memoryStore.questions.values()) {
+      if ((q as any).is_active === undefined || (q as any).is_active === true) {
+        processQuestion(q, false);
+      }
+    }
+    for (const w of memoryStore.writtenQuestions.values()) {
+      if ((w as any).is_active === undefined || (w as any).is_active === true) {
+        processQuestion(w, true);
+      }
+    }
+  }
+
+  const result: QuestionCountsResponse = {
+    totalQuestions: totalMcq + totalWritten,
+    totalMcq,
+    totalWritten,
+    bySubject,
+    byCategory,
+    bySubjectAndCategory,
+    byChapter,
+    byChapterAndCategory,
+    byTopic,
+    byTopicAndCategory,
+  };
+
+  if (!filters?.subject_id && !filters?.category && !filters?.chapter_id) {
+    cachedCounts = { timestamp: now, data: result };
+  }
+
+  return result;
+}
+

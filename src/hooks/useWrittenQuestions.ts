@@ -231,14 +231,14 @@ export function useInfiniteWrittenQuestions(
     },
     initialPageParam: undefined,
     getNextPageParam: (lastPage) => {
+      if (!lastPage.hasMore) return undefined;
       if (lastPage.nextCursor) {
         return lastPage.nextCursor;
       }
-      if (lastPage.hasMore && (lastPage.page ?? 1) < (lastPage.totalPages ?? 1)) {
-        return (lastPage.page ?? 1) + 1;
-      }
-      if (!lastPage.nextCursor && (lastPage.page ?? 1) < (lastPage.totalPages ?? 1)) {
-        return (lastPage.page ?? 1) + 1;
+      const currentPage = lastPage.page ?? 1;
+      const totalPages = lastPage.totalPages ?? 1;
+      if (currentPage < totalPages) {
+        return currentPage + 1;
       }
       return undefined;
     },

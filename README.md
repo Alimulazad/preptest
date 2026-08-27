@@ -45,6 +45,7 @@ jachai/
 ### 🎓 Student Learning Ecosystem
 - **Bengali-First UI & Pedagogy**: High-contrast typography and authentic Bengali academic vocabulary tailored for DU, BUET, Medical, and GST aspirants.
 - **Categorized Question Bank**: Filter by Subject, Paper (1st/2nd), Chapter, Topic, Difficulty (`Easy`, `Medium`, `Hard`), and University standard (`Varsity A`, `Engineering`, `Medical`, `GST`).
+- **Dynamic Real-Time Counting Engine**: Live question aggregation from PostgreSQL via `/api/questions/counts` across Subject cards, Category blocks, Chapter chips, and Topic chips without static or hardcoded estimates.
 - **Real-Time Mock Exam Engine**: Live exam timer, custom question sets, randomized shuffling, instant scoring, and accurate negative marking penalty deduction (0.25 marks).
 - **AI Tutor & Instant Solver**: Multi-turn academic tutor powered by Google Gemini (primary) with seamless OpenRouter fallback for LaTeX equations and step-by-step problem breakdown.
 - **Photo-Solve & OCR**: Upload or capture textbook questions to receive instant solutions, step-by-step explanations, and related concept links.
@@ -53,6 +54,11 @@ jachai/
 
 ### 🛡️ Administrator CMS & Operations
 - **Secure Admin Authentication**: JWT token authentication with `{ role: 'admin' }` claims and short-lived expiry.
+- **Smart Bulk Importer 3.0 & Taxonomy Resolver**: 3-stage lifecycle (`Parse` ➔ `Resolve / Multi-Tier Preview` ➔ `Transactional Commit`) with Bengali Unicode normalization (`packages/shared/src/taxonomy/resolve.ts`), categorization into `fullyResolvedRows`, `ambiguousRows` (candidate mismatch detection), and `missingTaxonomyRows`, transactional `ON CONFLICT DO UPDATE` question and taxonomy upserts, and real-time counter recalculations in the same transaction.
+- **Cascading Taxonomy Picker**: Searchable 4-level cascading selector (`Subject` ➔ `Paper` ➔ `Chapter` ➔ `Topic`) with in-line topic creation (`+ নতুন টপিক তৈরি করুন`) and immediate reactive refresh across Bulk Import and Question Edit modals.
+- **Taxonomy Health Dashboard**: Diagnostic and remediation portal visualizing duplicate suspect topics, zero-question topics, and orphan questions with transactional Merge, Normalize, Delete Empty, and Re-assign actions.
+- **Live Dynamic Master ID Chart**: Live export endpoints (`/api/admin/taxonomy/export-master-chart` and `/api/admin/taxonomy/tree`) rendering the live hierarchy of subjects, chapters, and topics on-demand.
+- **Database Hardening & Auto-Deduplication**: Schema migration `008_taxonomy_hardening` enforcing foreign keys, composite UNIQUE constraints, single-CTE survivor chapter mapping, and diagnostic health views (`duplicate_suspect_topics`, `zero_question_topics`, `orphan_topic_ids`).
 - **Question & Topic Editor**: Visual question creation, LaTeX equation previews, option management, and batch JSON imports.
 - **AI Question Extractor**: Convert unstructured question papers and scans into structured database models.
 - **Drafts Approval Queue**: Moderate community and OCR-extracted drafts before publishing to the live question bank.
@@ -98,6 +104,7 @@ JACHAI uses **PostgreSQL 16** with automatic in-memory SQLite fallback during lo
 
 ### Automatic Migration Runner (`/server/migrations.ts`)
 - Schema changes are versioned and executed automatically on startup inside atomic transactions (`001_initial_schema` to `007_relational_hierarchy_and_performance_indices`).
+- Pre-checks and idempotency safeguards (`ALTER TABLE ... ADD COLUMN IF NOT EXISTS`) ensure complete resilience across pre-existing tables (`subjects`, `chapters`, `written_questions`, `topics`, `questions`).
 - Failures trigger an instant rollback to maintain database integrity.
 
 ### 4-Layer Filtering & Auto-Healing Pipeline

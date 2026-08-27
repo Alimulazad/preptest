@@ -58,7 +58,18 @@ import {
   isPostgresActive,
   recordUserActivityInDb,
   getActiveUsersTelemetryFromDb,
+  getQuestionCounts,
 } from './server/db.js';
+import { resolveQuestionsImport, commitQuestionsImport } from './server/services/importService.js';
+import {
+  getTaxonomyTreeService,
+  getTaxonomyHealthService,
+  mergeTopicsService,
+  normalizeTopicService,
+  deleteEmptyTopicsService,
+  reassignOrphanQuestionsService,
+  exportMasterChartService,
+} from './server/services/taxonomyService.js';
 import { uploadQuestionImages, uploadSingleImage } from './server/utils/upload.js';
 import { logger } from './server/utils/logger.js';
 import {
@@ -1442,6 +1453,22 @@ Additional Notes from Admin: ${promptNotes || 'None'}`;
 });
 
 
+// GET /api/questions/counts (Live Aggregated Question Counts for Subjects, Categories, Chapters, and Topics)
+app.get('/api/questions/counts', async (req: Request, res: Response) => {
+  try {
+    const { subject_id, category, chapter_id } = req.query;
+    const counts = await getQuestionCounts({
+      subject_id: typeof subject_id === 'string' ? subject_id : undefined,
+      category: typeof category === 'string' ? category : undefined,
+      chapter_id: typeof chapter_id === 'string' ? chapter_id : undefined,
+    });
+    return res.json(counts);
+  } catch (error: any) {
+    console.error('Error fetching question counts:', error);
+    return res.status(500).json({ error: 'Failed to fetch question counts', details: error.message });
+  }
+});
+
 // GET /api/questions with optional filtering, cursor and page pagination
 app.get('/api/questions', async (req: Request, res: Response) => {
   try {
@@ -1724,6 +1751,191 @@ app.delete('/api/written-questions/:id', authenticateAdmin, async (req: Request,
   } catch (error: any) {
     console.error('Error deleting written question:', error);
     return res.status(500).json({ error: 'Failed to delete written question', details: error.message });
+  }
+});
+
+// POST /api/admin/questions/import-preview (Taxonomy Resolution & Multi-Tier Preview - Protected Admin)
+app.post('/api/admin/questions/import-preview', authenticateAdmin, async (req: Request, res: Response) => {
+  try {
+    let rawQuestions: any[] = [];
+    if (Array.isArray(req.body)) {
+      rawQuestions = req.body;
+    } else if (req.body && Array.isArray(req.body.questions)) {
+      rawQuestions = req.body.questions;
+    } else if (req.body && Array.isArray(req.body.data)) {
+      rawQuestions = req.body.data;
+    } else if (req.body && Array.isArray(req.body.items)) {
+      rawQuestions = req.body.items;
+    }
+
+    if (!rawQuestions || rawQuestions.length === 0) {
+      return res.status(400).json({ error: 'No questions found in preview payload' });
+    }
+
+    const preview = await resolveQuestionsImport(rawQuestions, req.body.defaults);
+    return res.status(200).json({
+      success: true,
+      ...preview,
+    });
+  } catch (error: any) {
+    console.error('Error in questions import preview:', error);
+    return res.status(500).json({
+      error: 'Import resolution preview failed',
+      details: error.message || 'An unexpected error occurred while resolving taxonomy.',
+    });
+  }
+});
+
+// POST /api/admin/questions/import-commit (Transactional Commit with Taxonomy Upsert & Counter Refresh - Protected Admin)
+app.post('/api/admin/questions/import-commit', authenticateAdmin, async (req: Request, res: Response) => {
+  try {
+    let rawQuestions: any[] = [];
+    if (Array.isArray(req.body)) {
+      rawQuestions = req.body;
+    } else if (req.body && Array.isArray(req.body.questions)) {
+      rawQuestions = req.body.questions;
+    } else if (req.body && Array.isArray(req.body.data)) {
+      rawQuestions = req.body.data;
+    } else if (req.body && Array.isArray(req.body.items)) {
+      rawQuestions = req.body.items;
+    }
+
+    if (!rawQuestions || rawQuestions.length === 0) {
+      return res.status(400).json({ error: 'No questions provided for commit' });
+    }
+
+    const createTaxonomy = Array.isArray(req.body.createTaxonomy) ? req.body.createTaxonomy : [];
+
+    const commitResult = await commitQuestionsImport({
+      questions: rawQuestions,
+      createTaxonomy,
+    });
+
+    return res.status(200).json({
+      success: true,
+      count: commitResult.importedQuestionsCount,
+      createdTaxonomyCount: commitResult.createdTaxonomyCount,
+      updatedTopicCountersCount: commitResult.updatedTopicCountersCount,
+      message: commitResult.message,
+    });
+  } catch (error: any) {
+    console.error('Error in questions import commit:', error);
+    return res.status(500).json({
+      error: 'Database commit failed',
+      details: error.message || 'An unexpected error occurred during import commit.',
+    });
+  }
+});
+
+// ---------------- TAXONOMY MANAGEMENT & HEALTH API ----------------
+
+// GET /api/taxonomy/tree or GET /api/admin/taxonomy/tree (Live taxonomy hierarchy tree)
+app.get(['/api/taxonomy/tree', '/api/admin/taxonomy/tree'], async (req: Request, res: Response) => {
+  try {
+    const treeData = await getTaxonomyTreeService();
+    return res.json(treeData);
+  } catch (error: any) {
+    console.error('Error fetching taxonomy tree:', error);
+    return res.status(500).json({ error: 'Failed to fetch taxonomy tree', details: error.message });
+  }
+});
+
+// GET /api/admin/taxonomy/health (Diagnostics: duplicate suspects, zero-question topics, orphan questions)
+app.get('/api/admin/taxonomy/health', authenticateAdmin, async (req: Request, res: Response) => {
+  try {
+    const health = await getTaxonomyHealthService();
+    return res.json(health);
+  } catch (error: any) {
+    console.error('Error fetching taxonomy health:', error);
+    return res.status(500).json({ error: 'Failed to fetch taxonomy health', details: error.message });
+  }
+});
+
+// POST /api/admin/taxonomy/merge-topics (Transactional merge of duplicate topics into survivor)
+app.post('/api/admin/taxonomy/merge-topics', authenticateAdmin, async (req: Request, res: Response) => {
+  try {
+    const { sourceTopicIds, targetTopicId, targetBanglaName, targetName } = req.body;
+    if (!targetTopicId || !Array.isArray(sourceTopicIds) || sourceTopicIds.length === 0) {
+      return res.status(400).json({ error: 'sourceTopicIds array and targetTopicId are required' });
+    }
+
+    const result = await mergeTopicsService({
+      sourceTopicIds,
+      targetTopicId,
+      targetBanglaName,
+      targetName,
+    });
+
+    return res.json(result);
+  } catch (error: any) {
+    console.error('Error merging topics:', error);
+    return res.status(500).json({ error: 'Topic merge failed', details: error.message });
+  }
+});
+
+// POST /api/admin/taxonomy/normalize-topic (Rename and normalize topic name transactionally)
+app.post('/api/admin/taxonomy/normalize-topic', authenticateAdmin, async (req: Request, res: Response) => {
+  try {
+    const { topicId, banglaName, name } = req.body;
+    if (!topicId || !banglaName) {
+      return res.status(400).json({ error: 'topicId and banglaName are required' });
+    }
+
+    const result = await normalizeTopicService({ topicId, banglaName, name });
+    return res.json({ success: true, topic: result });
+  } catch (error: any) {
+    console.error('Error normalizing topic:', error);
+    return res.status(500).json({ error: 'Topic normalization failed', details: error.message });
+  }
+});
+
+// POST /api/admin/taxonomy/delete-empty-topics (Delete topics with 0 questions transactionally)
+app.post('/api/admin/taxonomy/delete-empty-topics', authenticateAdmin, async (req: Request, res: Response) => {
+  try {
+    const { topicIds } = req.body;
+    if (!Array.isArray(topicIds) || topicIds.length === 0) {
+      return res.status(400).json({ error: 'topicIds array is required' });
+    }
+
+    const result = await deleteEmptyTopicsService(topicIds);
+    return res.json(result);
+  } catch (error: any) {
+    console.error('Error deleting empty topics:', error);
+    return res.status(500).json({ error: 'Delete empty topics failed', details: error.message });
+  }
+});
+
+// POST /api/admin/taxonomy/reassign-orphans (Reassign questions with orphan topic_id)
+app.post('/api/admin/taxonomy/reassign-orphans', authenticateAdmin, async (req: Request, res: Response) => {
+  try {
+    const { items } = req.body;
+    if (!Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ error: 'items array is required' });
+    }
+
+    const result = await reassignOrphanQuestionsService(items);
+    return res.json(result);
+  } catch (error: any) {
+    console.error('Error reassigning orphan questions:', error);
+    return res.status(500).json({ error: 'Reassign orphan questions failed', details: error.message });
+  }
+});
+
+// GET /api/admin/taxonomy/master-chart (Live Master ID chart export in json or markdown)
+app.get(['/api/admin/taxonomy/master-chart', '/api/taxonomy/master-chart'], async (req: Request, res: Response) => {
+  try {
+    const format = req.query.format === 'json' ? 'json' : 'markdown';
+    const chart = await exportMasterChartService(format);
+
+    if (format === 'json') {
+      return res.json(chart);
+    } else {
+      res.setHeader('Content-Type', 'text/markdown; charset=utf-8');
+      return res.send(chart);
+    }
+  } catch (error: any) {
+    console.error('Error generating master chart:', error);
+    return res.status(500).json({ error: 'Failed to generate master chart', details: error.message });
   }
 });
 

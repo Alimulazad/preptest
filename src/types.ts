@@ -152,7 +152,7 @@ export interface SubTopic {
   name: string;
   bangla_name: string;
   total_questions: number;
-  completed_questions: number;
+  completed_questions?: number;
   star_rating?: 1 | 2 | 3;
   mcq_count?: number;
   written_count?: number;

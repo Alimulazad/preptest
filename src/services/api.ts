@@ -772,6 +772,77 @@ export interface BulkImportResponse {
   details?: Array<{ path: string; message: string }>;
 }
 
+export interface ImportPreviewApiResponse {
+  success: boolean;
+  summary: {
+    totalRows: number;
+    fullyResolvedCount: number;
+    ambiguousCount: number;
+    missingTaxonomyCount: number;
+    canDirectlyCommit: boolean;
+  };
+  fullyResolvedRows: any[];
+  ambiguousRows: any[];
+  missingTaxonomyRows: any[];
+  taxonomyTree: any[];
+  error?: string;
+  details?: string;
+}
+
+export interface ImportCommitApiResponse {
+  success: boolean;
+  count: number;
+  createdTaxonomyCount: number;
+  updatedTopicCountersCount: number;
+  message: string;
+  error?: string;
+  details?: string;
+}
+
+export async function importQuestionsPreviewApi(payload: {
+  questions: any[];
+  defaults?: any;
+}): Promise<ImportPreviewApiResponse> {
+  const response = await fetchWithRetry(getApiUrl('/api/admin/questions/import-preview'), {
+    method: 'POST',
+    headers: getAdminAuthHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify(payload),
+  });
+
+  const resData = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    const errorObj: any = new Error(resData.error || 'Import preview failed');
+    errorObj.details = resData.details;
+    errorObj.status = response.status;
+    throw errorObj;
+  }
+
+  return resData;
+}
+
+export async function importQuestionsCommitApi(payload: {
+  questions: any[];
+  createTaxonomy?: any[];
+}): Promise<ImportCommitApiResponse> {
+  const response = await fetchWithRetry(getApiUrl('/api/admin/questions/import-commit'), {
+    method: 'POST',
+    headers: getAdminAuthHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify(payload),
+  });
+
+  const resData = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    const errorObj: any = new Error(resData.error || 'Import commit failed');
+    errorObj.details = resData.details;
+    errorObj.status = response.status;
+    throw errorObj;
+  }
+
+  return resData;
+}
+
 export async function bulkImportQuestionsApi(questionsData: any): Promise<BulkImportResponse> {
   const response = await fetchWithRetry(getApiUrl('/api/admin/questions/bulk-import'), {
     method: 'POST',
@@ -934,6 +1005,209 @@ export async function deleteTopic(id: string): Promise<boolean> {
   }
 
   return true;
+}
+
+// ---------------- TAXONOMY & HEALTH API ----------------
+
+export interface TaxonomyTopicTreeNode {
+  id: string;
+  chapter_id: string;
+  subject_id?: string;
+  paper?: string;
+  name: string;
+  bangla_name: string;
+  topic_code?: string;
+  star_rating: number;
+  total_questions: number;
+}
+
+export interface TaxonomyChapterTreeNode {
+  id: string;
+  subject_id: string;
+  name: string;
+  bangla_name: string;
+  paper?: string;
+  chapter_number?: number;
+  total_topics?: number;
+  topics: TaxonomyTopicTreeNode[];
+}
+
+export interface TaxonomySubjectTreeNode {
+  id: string;
+  name: string;
+  bangla_name: string;
+  paper: '1st' | '2nd';
+  chapters: TaxonomyChapterTreeNode[];
+}
+
+export interface TaxonomyTreeResponse {
+  subjects: TaxonomySubjectTreeNode[];
+  totalTopics: number;
+  totalChapters: number;
+  totalSubjects: number;
+}
+
+export interface DuplicateSuspectGroup {
+  group_id: string;
+  chapter_id: string;
+  chapter_name: string;
+  subject_id: string;
+  subject_name: string;
+  bangla_name: string;
+  normalized_key: string;
+  topics: Array<{
+    id: string;
+    name: string;
+    bangla_name: string;
+    total_questions: number;
+    mcq_count: number;
+    written_count: number;
+    created_at?: number;
+    is_suggested_survivor: boolean;
+  }>;
+  total_combined_questions: number;
+}
+
+export interface ZeroQuestionTopicItem {
+  id: string;
+  subject_id?: string;
+  subject_name?: string;
+  chapter_id: string;
+  chapter_name?: string;
+  name: string;
+  bangla_name: string;
+  created_at?: number;
+}
+
+export interface OrphanedQuestionItem {
+  question_id: string;
+  question_type: 'mcq' | 'written';
+  subject_id?: string;
+  chapter_id?: string;
+  topic_id?: string;
+  topic_name?: string;
+  question_text: string;
+}
+
+export interface TaxonomyHealthSummary {
+  health_score: number;
+  total_subjects: number;
+  total_chapters: number;
+  total_topics: number;
+  duplicate_groups_count: number;
+  suspect_duplicate_topics_count: number;
+  zero_question_topics_count: number;
+  orphaned_questions_count: number;
+  duplicate_suspects: DuplicateSuspectGroup[];
+  zero_question_topics: ZeroQuestionTopicItem[];
+  orphaned_questions: OrphanedQuestionItem[];
+}
+
+export async function fetchTaxonomyTreeApi(): Promise<TaxonomyTreeResponse> {
+  const response = await fetchWithRetry(getApiUrl('/api/taxonomy/tree'));
+  if (!response.ok) {
+    throw new Error('Failed to fetch taxonomy hierarchy tree');
+  }
+  return await response.json();
+}
+
+export async function fetchTaxonomyHealthApi(): Promise<TaxonomyHealthSummary> {
+  const response = await fetchWithRetry(getApiUrl('/api/admin/taxonomy/health'), {
+    headers: getAdminAuthHeaders(),
+  });
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to fetch taxonomy health metrics');
+  }
+  return await response.json();
+}
+
+export async function mergeTopicsApi(params: {
+  sourceTopicIds: string[];
+  targetTopicId: string;
+  targetBanglaName?: string;
+  targetName?: string;
+}): Promise<{
+  success: boolean;
+  merged_count: number;
+  target_topic_id: string;
+  reassigned_mcq_count: number;
+  reassigned_written_count: number;
+}> {
+  const response = await fetchWithRetry(getApiUrl('/api/admin/taxonomy/merge-topics'), {
+    method: 'POST',
+    headers: getAdminAuthHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify(params),
+  });
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to merge topics');
+  }
+  return await response.json();
+}
+
+export async function normalizeTopicApi(params: {
+  topicId: string;
+  banglaName: string;
+  name?: string;
+}): Promise<{ success: boolean; topic: TopicRecord }> {
+  const response = await fetchWithRetry(getApiUrl('/api/admin/taxonomy/normalize-topic'), {
+    method: 'POST',
+    headers: getAdminAuthHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify(params),
+  });
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to normalize topic');
+  }
+  return await response.json();
+}
+
+export async function deleteEmptyTopicsApi(topicIds: string[]): Promise<{
+  success: boolean;
+  deleted_count: number;
+  deleted_ids: string[];
+}> {
+  const response = await fetchWithRetry(getApiUrl('/api/admin/taxonomy/delete-empty-topics'), {
+    method: 'POST',
+    headers: getAdminAuthHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify({ topicIds }),
+  });
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to delete empty topics');
+  }
+  return await response.json();
+}
+
+export async function reassignOrphanQuestionsApi(items: Array<{
+  question_id: string;
+  question_type: 'mcq' | 'written';
+  target_topic_id: string;
+}>): Promise<{ success: boolean; reassigned_count: number }> {
+  const response = await fetchWithRetry(getApiUrl('/api/admin/taxonomy/reassign-orphans'), {
+    method: 'POST',
+    headers: getAdminAuthHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify({ items }),
+  });
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to reassign orphan questions');
+  }
+  return await response.json();
+}
+
+export async function fetchMasterChartApi(format: 'json' | 'markdown' = 'markdown'): Promise<string | any> {
+  const response = await fetchWithRetry(getApiUrl(`/api/admin/taxonomy/master-chart?format=${format}`), {
+    headers: getAdminAuthHeaders(),
+  });
+  if (!response.ok) {
+    throw new Error('Failed to fetch master chart');
+  }
+  if (format === 'json') {
+    return await response.json();
+  }
+  return await response.text();
 }
 
 export async function verifyAdminPassword(password: string): Promise<boolean> {
